@@ -10,6 +10,8 @@
 #********************************************************************************/
 
 CC   = g++
+#CC   = clang++
+
 OBJ  =  main.o node.o globalconfig.o line.o reservoir.o dataset.o qmin.o \
 		powerstation.o channel.o riversystem.o scenario.o herss.o arraycurve.o \
 		xtime.o topoparser.o logger.o cascadedreservoirs.o
@@ -40,7 +42,14 @@ GTEST_DIR = /usr/src/gtest
 NO_LOG ?= 0
 
 # Compile for testing and debugging. 
-CFLAGS = $(INCS) -Wall -O3 -pedantic -fPIC
+CFLAGS = $(INCS) -Wall -O3 -pedantic -fPIC -march=native
+
+# These should be tested at some point. But needs proper testing to make sure numerical issues dont polute simulation results. 
+# -flto — link-time optimization, can give 5–15% by inlining across translation units
+# -ffast-math — allows unsafe float reordering, often 10–30% on numeric code (but check results for correctness)
+
+
+
 
 ifeq ($(NO_LOG),1)
   CFLAGS += -DHERSS_NO_LOG
