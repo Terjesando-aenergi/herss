@@ -200,10 +200,12 @@ int Herss::prepaireSimulation(Dataset *data) {
         rs->nodes[n]->ReadStateFile(gc->start_statefile);
     }
 
+
     // Initialize all arraycurves 
     for(size_t n = 0; n < gc->nr_nodes; n++) {
         rs->nodes[n]->initArrayCurves();
     }
+
 
     for(size_t r = 0; r < gc->nr_reservoirs; r++) {
         rs->reservoirs[r].InitReservoir();

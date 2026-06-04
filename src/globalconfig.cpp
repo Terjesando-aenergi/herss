@@ -11,6 +11,10 @@ Copyright (c) <2024> <Å Energi, Bernt Viggo Matheussen>
 
 #include "herss.h"
 
+#include <algorithm>
+#include <cctype>
+
+
 GlobalConfig::GlobalConfig(){
 
     globalfile         = DEFAULT_STRING_INIT;
@@ -37,6 +41,10 @@ GlobalConfig::GlobalConfig(){
     this->write_nodefiles              = false;
     this->printglobalinfo              = false;
     this->printeconomicinfo            = false;
+
+    this->use_reservoir_curve          = false;
+    this->use_reservoir_geometry       = false;
+
 
     this->dt                 = NOT_INIT;
     this->dt_last            = NOT_INIT;  // Last time step in the simulation
@@ -79,7 +87,7 @@ void GlobalConfig::checkNrSteps() {
     if( line.length()  > 0 && ( line[0] != '#') ) {
         keyword = line_obj.extractNextElementFromLine(&line);
         value   = line_obj.extractNextElementFromLine(&line);
-        if (!keyword.compare("RESTPRICE") == 0) {
+        if ((!keyword.compare("RESTPRICE")) == 0) {
 		    LOG_ERR("There is an error in the pricefile " + this->pricefile + " please revisit input");
 
         }
@@ -89,7 +97,7 @@ void GlobalConfig::checkNrSteps() {
     if( line.length()  > 0 && ( line[0] != '#') ) {
         keyword = line_obj.extractNextElementFromLine(&line);
         value   = line_obj.extractNextElementFromLine(&line);
-        if (!keyword.compare("Date") == 0) {
+        if ((!keyword.compare("Date")) == 0) {
 		    LOG_ERR("There is an error in the pricefile " + this->pricefile + " please revisit input");
         }
     }
@@ -177,7 +185,6 @@ void GlobalConfig::Diagnose() {
 
     topoparser.loadFile(this->topologyfile);
 
-
     this->n_action_nodes_from_topology = 0;
 
     int hatch_idnr; 
@@ -187,8 +194,16 @@ void GlobalConfig::Diagnose() {
         keyword = line_obj.extractNextElementFromLine(&line);
         value   = line_obj.extractNextElementFromLine(&line);
 
-        if (keyword.compare("NODE") == 0) {
+        // Check wether we use RESERVOIR_CURVE or reservoir geometry for calculating the reservoir filling. 
+        if (keyword.compare("RESERVOIR_CURVE") == 0) {
+            this->use_reservoir_curve = true;
+        }
+        
+        if (keyword.compare("RESERVOIR_GEOMETRY") == 0) {
+            this->use_reservoir_geometry = true;
+        }
 
+        if (keyword.compare("NODE") == 0) {
              if (value.compare("RESERVOIR") == 0) {
                 nodetypes[this->nr_nodes] = NodeType::RESERVOIR;
                 this->nr_reservoirs++;
@@ -203,15 +218,6 @@ void GlobalConfig::Diagnose() {
             }
             this->nr_nodes++;
         }
-
-        if(keyword.compare("OUTLET_HATCH") == 0) {
-            // OUTLET_HATCH -9999
-            hatch_idnr = stoi(value);
-            if(hatch_idnr >= 0 && hatch_idnr <= int(this->nr_nodes) ) {
-                this->n_action_nodes_from_topology++;
-            }
-        }
-
         
         int tmp_n_generators; 
         if(keyword.compare("NR_GENERATORS") == 0) {
@@ -220,6 +226,27 @@ void GlobalConfig::Diagnose() {
                  this->n_action_nodes_from_topology += tmp_n_generators;
             }
         }
+    }
+
+    // Bug BVM 4 June 2026.
+    // We cannot check OUTLET_HATCH in the same loop as we count nr of nodes.
+    // This is because we may point a hatch to a node with higher idnr, than nr_nodes
+    for (size_t i = 0; i < topoparser.getLineCount(); ++i) {
+        line = topoparser.getLine(i);
+        keyword = line_obj.extractNextElementFromLine(&line);
+        value   = line_obj.extractNextElementFromLine(&line);
+        if(keyword.compare("OUTLET_HATCH") == 0) {
+            // OUTLET_HATCH -9999
+            hatch_idnr = stoi(value);
+            if(hatch_idnr >= 0 && hatch_idnr <= int(this->nr_nodes) ) {
+                this->n_action_nodes_from_topology++;
+            }
+        }
+    }
+
+
+    if(this->use_reservoir_curve && this->use_reservoir_geometry) {
+        LOG_ERR("You cannot use both RESERVOIR_CURVE and RESERVOIR_GEOMETRY in the topology file " + this->topologyfile + " please revisit input");
     }
 
 
@@ -251,7 +278,7 @@ void GlobalConfig::Diagnose() {
     getline(myfile, line);  // Read first line
     keyword = line_obj.extractNextElementFromLine(&line);
 
-    if (!keyword.compare("Date_NodeID") == 0) {
+    if ((!keyword.compare("Date_NodeID")) == 0) {
 		LOG_ERR("There is an error in the actionsfile file " + this->actionsfile + " please revisit input");
     }
     
@@ -280,7 +307,7 @@ void GlobalConfig::Diagnose() {
     getline(myfile, line);  // Read first line
     keyword = line_obj.extractNextElementFromLine(&line);
 
-    if (!keyword.compare("Date_NodeID") == 0) {
+    if ((!keyword.compare("Date_NodeID")) == 0) {
 		LOG_ERR("There is an error in the inflowfile file " + this->inflowfile + " please revisit input");
 		exit(EXIT_FAILURE);
     }
@@ -304,9 +331,12 @@ void GlobalConfig::Diagnose() {
     for(size_t c = 0; c < this->n_inflow_nodes; c++) {
         value = line_obj.extractNextElementFromLine(&line);
         inflows_idnrs[c] = stoi(value);
+        // cout << "Checking inflow node idnr " << inflows_idnrs[c] << " against reservoir idnrs in topology file...\n";
     }
     myfile.close();
     //-------------------------------------------------------------------------------
+
+
 
 
 
@@ -330,7 +360,10 @@ void GlobalConfig::readGlobalFile() {
 
     while(!myfile.eof()){
         getline(myfile, line);
-        if( line.length()  > 0 && ( line[0] != '#') ) {
+
+        if( line.length() > 0 && (line[0] != '#') &&
+            std::any_of(line.begin(), line.end(), ::isalnum) ) {
+
             // Line is not empty and doesn't start with # (hash/pound sign)
             keyword = line_obj.extractNextElementFromLine(&line);
             value   = line_obj.extractNextElementFromLine(&line);

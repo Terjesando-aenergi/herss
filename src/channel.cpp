@@ -350,7 +350,8 @@ int Channel::ReadStateFile(string filename){
     myfile.close();
 
     if(!found_node) {
-		LOG_ERR("There is something wrong with nodes in the statefile " + filename);
+        LOG_INFO("nodename=" + nodename + " idnr=" + std::to_string(int(idnr)) + " nodetype=CHANNEL");
+		LOG_ERR("We could not find node " + nodename + " with idnr=" + std::to_string(int(idnr)) + " in the statefile " + filename);
     }
 
     return 0;

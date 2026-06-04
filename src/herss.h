@@ -38,9 +38,9 @@ SOFTWARE.
 #include <string.h>
 #include <sstream>
 #include <map>
+#include <cmath>
 #include "arraycurve.h"
 #include "logger.h"
-
 #include <time.h>
 #include <vector> 
 
@@ -48,8 +48,9 @@ using namespace std;
 
 
 // BVM May 2026, we start using the version convention MAJOR.MINOR.PATCH
-const string VERSION = "3.0.01";
-const string VERSION_DATE = "20260501";
+const string VERSION = "3.1.01";
+const string VERSION_DATE = "20260604";
+
 
 // Maximum number of nodes allowed. // to save coding
 #define MAX_NR_NODES 30
@@ -68,6 +69,8 @@ const string VERSION_DATE = "20260501";
 // Average Earth gravity
 #define GRAVITY 9.80665
 
+#define PI 3.14159265358979323846
+
 #define MOUNT_EVEREST_MASL 8848.0
 
 const string DELIMITER = " \n\t";
@@ -75,7 +78,6 @@ const string NUMERIC = "0123456789.-";
 
 #define NOT_INIT 9999999
 #define STR_NOT_INIT "ERROR_STR_NOT_INIT"
-
 
 // #include <limits> std::numeric_limits<double>::max();
 // More practical number to use in the code.
@@ -113,6 +115,32 @@ const std::string DEFAULT_STRING_INIT = "ERROR_STR_NOT_INIT";
    #define timegm(X) _mktime64(X) - timezone
    #define gmtime_r(X,Y) gmtime_s(Y,X)
 #endif
+
+
+
+
+//-----------------------------------------------------------------------------
+// Smoothly maps ℝ → [0,1] (differentiable alternative to clamp)
+// We avoid "hard"-constraining the range of parameters [min,max] 
+// Instead we use the smoothClamp01 function to smoothly constrain the range of parameters to [0,1], 
+// and then we can scale and shift this to get the desired range. 
+inline double smoothClamp01(double x) {
+    double y = 0.5 * (x / (1.0 + std::abs(x)) + 1.0);
+    return y * y * (3.0 - 2.0 * y);
+}
+
+// We avoid using hard minimum and maximum functions, 
+// and instead use smooth approximations
+inline double smooth_max(double a, double b) {
+    return log(exp(a) + exp(b));
+}
+
+inline double smooth_min(double a, double b) {
+    return -log(exp(-a) + exp(-b));
+}
+//-----------------------------------------------------------------------------
+
+
 
 
 // This is the naming convention that needs to be used inside the topolgy file 
@@ -155,7 +183,7 @@ class TopologyParser {
 
 private:
     std::vector<std::string> lines;
-    size_t currentLine = 0;
+    // size_t currentLine = 0;
     std::string trim(const std::string& str);
     
 public:
@@ -271,7 +299,6 @@ public:
     ~GlobalConfig();
 
     NodeType nodetypes[MAX_NR_NODES];  // We keep track of which nodetype each index 0,1,2,3 etc is. 
-
     string globalfile;
     string topologyfile;
     string actionsfile;
@@ -295,9 +322,11 @@ public:
     bool found_outputfilename;
     bool found_dt;
     bool write_nodefiles;
-
     bool printglobalinfo; 
     bool printeconomicinfo;
+    bool use_reservoir_curve;
+    bool use_reservoir_geometry;
+
 
     string logfilename;
     size_t nr_nodes;
@@ -479,10 +508,8 @@ class CascadedReservoirs {
     ~CascadedReservoirs();
     void setInitialStorage(std::vector<double> initial_storage_Mm3);
     double route(double q_in_m3s, double dt_seconds);
-
     double totalStorageM3();
     double getStorageMm3(size_t idx_linres);
-
 
   private:
 
@@ -577,27 +604,43 @@ class Reservoir: public Node {
     GlobalConfig *gc;
     double floodlevel_penalty;
     double floodlevel_cost;
-
     double reservoir_init_fr;
     double reservoir_init_masl;
     double reservoir_init_Mm3;
     double reservoir_init_active_Mm3;  // minus the filling at LRW
     double active_max_volume_Mm3;  // Filling at HRW minus the filling at LRW 
-
     double res_HRW;             //  Highest regulated water level [masl]
+    double res_LRW;             //  Lowest regulated water level [masl]
     double filling_at_hrw_Mm3;  // Mm3
+    double filling_at_lrw_Mm3;  // Mm3
     double filling_at_hatchlevel;
     double cost_lrw;
-    double res_LRW;             //  Lowest regulated water level [masl]
-    double filling_at_lrw_Mm3;  // Mm3
     double res_penalty;
-    double res_Mm3;             //  Reservoir filling [Mm3]
-
-    bool fast_overflow = false; // If true, we use the fast overflow calculation.
+    bool fast_overflow;         // If true, we use the fast overflow calculation.
     
+    // Dynamic variables that change during the simulation
+    double res_Mm3;             //  Reservoir filling [Mm3]
     double res_masl;            //  Reservoir filling [masl]
     double res_fr;              //  Reservoir filling as a fraction of full.
 
+
+    // Reservoir geometry, we assume a trapezoidal shape
+    // we use this to scip the reservoir curve. 
+    bool use_reservoir_geometry;
+    double width_m;
+    double length_m;
+    double theta; // angle of the sides of the reservoir, in degrees.
+    double bottom_masl; // masl of the bottom of the reservoir.
+
+    // We precompute this one to save time in the simulation.
+    double slope_term; // tan((90.0 - theta) * PI / 180.0);   
+
+    // We precompute this one to save time in the simulation.
+    double geo_denom; 
+    // geo_denom = length_m * (slope_term + width_m); 
+
+
+    bool use_reservoir_curve; // If true, we use the reservoir curves for calculating the filling and the masl.
     double res_curve_masl[MAX_NR_POINTS_CURVE];
     double res_curve_Mm3[MAX_NR_POINTS_CURVE];
     size_t nr_points_res_curve;
@@ -637,6 +680,12 @@ class Reservoir: public Node {
 
     // We check if the settings for the reservoir are valid. 
     void ValidateReservoirSettings();  
+
+
+    double calcResVolume(double masl);  // Returns Mm3 
+    double calcResMasl(double Mm3);     // Returns masl
+
+
 
 };
 /////////////////////////////////////////////////////////////////////////////////////////
