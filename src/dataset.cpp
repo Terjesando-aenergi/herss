@@ -171,7 +171,8 @@ void Dataset::readActionsFile() {
         LOG_ERR("The actionsfile " + gc->actionsfile + " could not be found/opened");
     }   
 
-    // The actions can be hatch release from reservoirs or powerproduction at powerstations (multi-generator). 
+    // The actions can be hatch release from reservoirs
+    // or powerproduction (multi-generator). 
 
     size_t active_nodes = 0;
 
@@ -179,7 +180,7 @@ void Dataset::readActionsFile() {
     if( line.length()  > 0 && ( line[0] != '#') ) {
 
         keyword = line_obj.extractNextElementFromLine(&line);
-        if (!keyword.compare("Date_NodeID") == 0) {
+        if ((!keyword.compare("Date_NodeID")) == 0) {
             LOG_ERR("There is an error (missing Date_NodeID) in the actionsfile file " + gc->actionsfile + " please revisit input");
         }
         string tmpline = line;
@@ -237,8 +238,7 @@ void Dataset::readInflowFile() {
     string keyword;
     string value;
     Line line_obj;
-    int idnrs[MAX_NR_NODES];  // We save the idnrs given in the first line in the inputfile. 
-
+    size_t idnrs[MAX_NR_NODES];  // We save the idnrs given in the first line in the inputfile. 
 
     // The number of columns should be the same as number of reservoirs + 1 (the date column). 
 
@@ -252,7 +252,7 @@ void Dataset::readInflowFile() {
 
     if( line.length()  > 0 && ( line[0] != '#') ) {
         keyword = line_obj.extractNextElementFromLine(&line);
-        if (!keyword.compare("Date_NodeID") == 0) {
+        if ((!keyword.compare("Date_NodeID")) == 0) {
             LOG_ERR("There is an error (missing Date_NodeID) in the inflowseries file " + gc->inflowfile + " please revisit input");
         }
         string tmpline = line;
@@ -269,7 +269,23 @@ void Dataset::readInflowFile() {
         // Now we read in the idnrs for each coloumn and save it. 
         for(size_t c = 0; c < active_nodes; c++) {
             value = line_obj.extractNextElementFromLine(&line);
-            idnrs[c] = stoi(value);
+            int tmp_idnr = stoi(value);
+            if(tmp_idnr < 0 || tmp_idnr >= MAX_NR_NODES) {
+                LOG_ERR("Error: idnr " + std::to_string(tmp_idnr) + " in inflowfile " + gc->inflowfile + " is out of bounds. It should be between 0 and " + std::to_string(MAX_NR_NODES-1));
+            }
+            idnrs[c] = size_t(tmp_idnr);
+        }
+    }
+
+    // Until now we only accept inflow to reservoirs.
+    // This means that the idnrs in the inflow file should match the idnrs of the reservoirs in the topology file.
+    // We check this and give an error if they do not match.
+    for(size_t c = 0; c < active_nodes; c++) {
+        if(gc->nodetypes[idnrs[c]] != NodeType::RESERVOIR) {
+            LOG_INFO("The idnr " + std::to_string(idnrs[c]) + " in the inflowfile " + gc->inflowfile + " does not match a reservoir node in the topology file " + gc->topologyfile);
+            LOG_INFO("Please revisit input. The idnr " + std::to_string(idnrs[c]) + " in the inflowfile should match a reservoir node in the topology file.");
+            LOG_WARN("The idnr " + std::to_string(idnrs[c]) + " in the inflowfile " + gc->inflowfile + " does not match a reservoir node in the topology file " + gc->topologyfile);
+            LOG_ERR("Please revisit input. The idnr " + std::to_string(idnrs[c]) + " in the inflowfile should match a reservoir node in the topology file.");
         }
     }
 
@@ -340,7 +356,7 @@ void Dataset::readPricefile() {
     if( line.length()  > 0 && ( line[0] != '#') ) {
         keyword = line_obj.extractNextElementFromLine(&line);
         value   = line_obj.extractNextElementFromLine(&line);
-        if (!keyword.compare("Date") == 0) {
+        if ((!keyword.compare("Date")) == 0) {
             LOG_ERR("There is an error in the pricefile " + gc->pricefile + " please revisit input");
         }
     }
