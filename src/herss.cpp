@@ -173,6 +173,8 @@ int Herss::prepaireSimulation(Dataset *data) {
         }
     }
 
+
+
     for(size_t n = 0; n < gc->nr_nodes; n++) {
         rs->nodes[n]->ReadNodeData(gc->topologyfile);
         rs->nodes[n]->S = this->scen[n];
@@ -214,7 +216,39 @@ int Herss::prepaireSimulation(Dataset *data) {
     }
 
     SetPointers();
+    
+    // BVM June 2026. 
+    // Make sure actions for RESERVOIRS are set correctly 
+    if(!data->action_colnames.empty()) {
+        for (size_t n = 0; n < gc->nr_nodes; ++n) {
+            Node* node = rs->nodes[n];
+            if (node->nodetype == NodeType::RESERVOIR) {
+                Reservoir* res = static_cast<Reservoir*>(node);
 
+                // We only do this if outlet_hatch is in use, 
+                // otherwise the action vector for reservoirs is not used and can be left as is.
+                if(res->outlet_hatch_in_use) {
+                
+                    // Find the column index in Dataset
+                    int col_idx = -1;
+                    for (size_t c = 0; c < data->action_colnames.size(); ++c) {
+                        if (data->action_colnames[c] == std::to_string(res->idnr)) {
+                            col_idx = c;
+                            break;
+                        }
+                    }
+
+                    if (col_idx == -1) {
+                        LOG_ERR("ERROR: Could not find action column for " + std::to_string(res->idnr) + " in action file");
+                    }
+
+                    for (size_t t = 0; t < data->stps; ++t) {
+                        res->S->action[t][res->idnr] = data->action[t][col_idx];
+                    }
+                }
+            }
+        }
+    }
 
     // CHANGES BY OVE: Map generator actions from actions.txt to each generator in each powerstation
     if(!data->action_colnames.empty()) {
@@ -486,15 +520,6 @@ void Herss::PrintAllInput() {
         printf("\n");
     }
 
-    //PrintReservoirLevels_fr();
-    // printf("Overflow_Mm3\n");
-    // for(size_t t = 0; t < gc->stps; t++) {
-    //     for(size_t r = 0; r < gc->nr_reservoirs; r++) {
-    //         printf("%.5f ", rs->reservoirs[r].S->overflow_Mm3[t]);
-    //     }
-    //     printf("\n");
-    // }
-
 }
 /////////////////////////////////////////////////////////////////////
 void Herss::SetInflowInNode(size_t t, size_t nodenr, double value) {
@@ -527,8 +552,6 @@ double Herss::GetReservoirLevel_fr(size_t node_idnr, size_t t) {
 // In this function we calculate the watervalue at the END of the timestep.
 double Herss::CalcWaterValue_atEndofStp(size_t t) {
 
-
-    // printf("################  CalcWaterValue    t= %lu #################################\n", t );
     if(gc->nr_reservoirs > 1) {
         LOG_ERR("ERROR:  This function is not implemented yet");
     }
@@ -539,18 +562,10 @@ double Herss::CalcWaterValue_atEndofStp(size_t t) {
     Simulate();
 
     rs->CalcVF(rs->nodes[0]->S->restprice);
-    
-    // printf("ValueFunction at start of timestep 0 t=0 = %.4f\n", myValueFunc0);
 
     rs->ValueFunction[t]  = rs->CalcVF_atEndOfStp(rs->nodes[0]->S->restprice, t);
 
     double vf0 = rs->ValueFunction[t];
-    
-    //printf("ValueFunction at end of timestep 0 t=0 = %.4f\n", rs->ValueFunction[t]);
-    //printf("sum_total_MWh               = %.2f \n", rs->sum_total_MWh);
-    //printf("sum_production              = %.2f \n", rs->sum_production);
-    //printf("tot_remaining_available_MWh = %.2f \n", rs->tot_remaining_available_MWh);
-
 
     // Now we find sum production + remaining energy in the system from start time to end of the current timestep t 
     // We do this by summing up production from start to end of current stp. 
@@ -562,8 +577,6 @@ double Herss::CalcWaterValue_atEndofStp(size_t t) {
         }
     }
     double E0 = rs->sum_total_MWh - start_sum_production;
-
-    // printf("energy_end_of_stp = %.2f\n", E0);
 
     double old_inflow = GetInflowInNode(t, 0);
     double max_res_Mm3 = rs->reservoirs[0].filling_at_hrw_Mm3 - rs->reservoirs[0].filling_at_lrw_Mm3;
@@ -579,7 +592,6 @@ double Herss::CalcWaterValue_atEndofStp(size_t t) {
     double myValueFunc1 = rs->CalcVF_atEndOfStp(rs->nodes[0]->S->restprice, t);
     double vf1 = myValueFunc1;
 
-    // printf("ValueFunction at end of timestep 1 t=1, with deltaR   = %.4f\n", myValueFunc1);
 
     // Find the energy 
     start_sum_production = 0.0;
@@ -589,7 +601,7 @@ double Herss::CalcWaterValue_atEndofStp(size_t t) {
         }
     }
     double E1 = rs->sum_total_MWh - start_sum_production;
-    // printf("energy_end_of_stp with perturbation in reservoir = %.2f\n", E1);
+
 
     // In the last timestep we have can add water to the end reservoir.
     double watervalue = (vf1 - vf0)/(E1 - E0);
@@ -642,9 +654,6 @@ int Herss::Simulate() {
             
             // Set current node information for ArrayCurve error reporting
             ArrayCurve::setCurrentNode(rs->nodes[n]->idnr, rs->nodes[n]->nodename);
-
-            //printf("timestep t= %lu   Nodeidnr: %lu, nodename: %s    nodetype %s \n", 
-            //    t, rs->nodes[n]->idnr, rs->nodes[n]->nodename.c_str(), EnumToString(rs->nodes[n]->nodetype) );
                     
             rs->nodes[n]->Simulate(t);
         }
@@ -680,6 +689,7 @@ int Herss::CheckWaterBalance() {
 int Herss::GlobalWaterBalance(){
     rs->start_water_Mm3 = 0.0;
     rs->end_water_Mm3 = 0.0;
+
     for(size_t n = 0; n < gc->nr_nodes; n++) {
         rs->start_water_Mm3 += rs->nodes[n]->GetStartWater_Mm3();
     }

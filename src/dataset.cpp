@@ -15,7 +15,6 @@ This software is released under the MIT license.
 Dataset::Dataset(GlobalConfig *gc){
 
     this->gc = gc;
-
     this->stps     = gc->stps;
     this->nr_nodes = gc->nr_nodes;
     try {
@@ -32,7 +31,7 @@ Dataset::Dataset(GlobalConfig *gc){
 
     for(size_t t = 0; t < stps;  t++) {
         for(size_t n = 0; n < nr_nodes;  n++) {
-            inflow[t][n] = 0.0;  // To make things easyer and faster 
+            inflow[t][n] = 0.0;  // To make things easier and faster 
             action[t][n] = NOT_INIT;
         }
     }
@@ -98,9 +97,6 @@ void Dataset::multi_temporal_resolution() {
 
     // Add the last timestep with the same delta_t as the previous one
     delta_t.push_back(static_cast<int>(epochs[stps-1] - epochs[stps-2]));
-
-    //for (size_t t = 0; t < stps; ++t) {         cout << "t= " << t << " " << delta_t[t] << endl;     }
-
 
 }
 /////////////////////////////////////////////////////////////////////////////////////////
