@@ -64,7 +64,6 @@ double CascadedReservoirs::totalStorageM3() {
     }
 
     return total_storage_m3;
-
 }
 //------------------------------------------------------------------------------------------------
 void CascadedReservoirs::setInitialStorage(std::vector<double> initial_storage_Mm3) {

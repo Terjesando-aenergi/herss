@@ -101,9 +101,7 @@ double ArrayCurve::x2y(double x) {
     xt = (x-xmin)/(xmax-xmin);
 
     if(xt > 1.0 || xt < 0.0) {
-
         LOG_WARN("ERROR with normalization   [0,1]");
-
         printf("ERROR with normalization   [0,1]\n");
         printf("xt=%.8f\n", xt );
         printf("xmin = %.4f\n", xmin );
@@ -113,9 +111,7 @@ double ArrayCurve::x2y(double x) {
         for(int i = 0; i < nr_pts; i++) {
             printf("%d x_points[i]=%.5f  y_points[i]=%.5f\n", i, x_points[i], y_points[i]);
         }
-        
         return -1.0 * VERY_LARGE_NUMBER;
-
     }
 
     int idx;
@@ -124,7 +120,6 @@ double ArrayCurve::x2y(double x) {
     if(xt < x_points[0] || xt > x_points[nr_pts-1]) {
         
         LOG_WARN("ERROR: x value is out of bounds for interpolation");
-
         printf("HOUSTON - we have a problem!\n");
         printf("x=%.3f\n", xt);
         printf("idx = %d\n", idx);

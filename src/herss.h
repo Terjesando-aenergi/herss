@@ -43,14 +43,11 @@ SOFTWARE.
 #include "logger.h"
 #include <time.h>
 #include <vector> 
-
 using namespace std;
 
-
 // BVM May 2026, we start using the version convention MAJOR.MINOR.PATCH
-const string VERSION = "3.1.01";
-const string VERSION_DATE = "20260604";
-
+const string VERSION = "3.1.02";
+const string VERSION_DATE = "20260605";
 
 // Maximum number of nodes allowed. // to save coding
 #define MAX_NR_NODES 30
@@ -68,9 +65,7 @@ const string VERSION_DATE = "20260604";
 
 // Average Earth gravity
 #define GRAVITY 9.80665
-
 #define PI 3.14159265358979323846
-
 #define MOUNT_EVEREST_MASL 8848.0
 
 const string DELIMITER = " \n\t";
@@ -86,7 +81,6 @@ const string NUMERIC = "0123456789.-";
 const std::string DEFAULT_STRING_INIT = "ERROR_STR_NOT_INIT";
 
 #define HERSS_DEBUG_ALL false
-
 #define MAX_NUMBER_OF_QMIN_PERIODS 5
 
 // Turn on and off warnings related to check of waterbalance. 
@@ -97,9 +91,7 @@ const std::string DEFAULT_STRING_INIT = "ERROR_STR_NOT_INIT";
 
 // Maximum nr of generators in a powerstation
 #define MAX_NR_GENERATORS 6
-
 #define MAX_NR_CASCADED_RESERVOIRS 10
-
 
 /////////////////////////////////////////////////////////////////
 #define MACRO_m3s_2_Mm3(q, dt) q*dt/1000000.0
@@ -115,9 +107,6 @@ const std::string DEFAULT_STRING_INIT = "ERROR_STR_NOT_INIT";
    #define timegm(X) _mktime64(X) - timezone
    #define gmtime_r(X,Y) gmtime_s(Y,X)
 #endif
-
-
-
 
 //-----------------------------------------------------------------------------
 // Smoothly maps ℝ → [0,1] (differentiable alternative to clamp)
@@ -139,8 +128,6 @@ inline double smooth_min(double a, double b) {
     return -log(exp(-a) + exp(-b));
 }
 //-----------------------------------------------------------------------------
-
-
 
 
 // This is the naming convention that needs to be used inside the topolgy file 
@@ -324,8 +311,6 @@ public:
     bool write_nodefiles;
     bool printglobalinfo; 
     bool printeconomicinfo;
-    bool use_reservoir_curve;
-    bool use_reservoir_geometry;
 
 
     string logfilename;
@@ -623,6 +608,11 @@ class Reservoir: public Node {
     double res_masl;            //  Reservoir filling [masl]
     double res_fr;              //  Reservoir filling as a fraction of full.
 
+    // We can mix usage of reservoir curve and reservoir geometry, 
+    // but we need to make sure that they are consistent.
+    // We can only use one of them in each reservoir. 
+    // but mix them in a riversystem. 
+
 
     // Reservoir geometry, we assume a trapezoidal shape
     // we use this to scip the reservoir curve. 
@@ -645,11 +635,23 @@ class Reservoir: public Node {
     double res_curve_Mm3[MAX_NR_POINTS_CURVE];
     size_t nr_points_res_curve;
 
+    bool use_overflow_curve; // If true, we use the overflow curve for calculating the overflow.
     double ovefl_curve_masl[MAX_NR_POINTS_CURVE];
     double ovefl_curve_m3s[MAX_NR_POINTS_CURVE];
     size_t nr_points_ovefl_curve;
  
     double minQ_hatch, maxQ_hatch, hatch_masl;
+
+    // BVM, 5 June 2026. 
+    // Spillway, Q = CLH^1.5, 
+    // where C is the spillway coefficient, 
+    // L is the spillway width, and H is the head above the spillway.
+    // H is typically the reservoir level minus the spillway level.
+    // We can use this to calculate the overflow when the reservoir level is above the spillway level. 
+    double spillway_C;
+    double spillway_L;
+    double spillway_level_masl;  // The level of the spillway in masl
+    bool use_spillway; // If true, we use the spillway for calculating the overflow.
 
     ArrayCurve ac_res_masl_2_Mm3;
     ArrayCurve ac_res_Mm3_2_masl;
@@ -681,7 +683,6 @@ class Reservoir: public Node {
     // We check if the settings for the reservoir are valid. 
     void ValidateReservoirSettings();  
 
-
     double calcResVolume(double masl);  // Returns Mm3 
     double calcResMasl(double Mm3);     // Returns masl
 
@@ -707,6 +708,42 @@ class Powerstation: public Node {
     size_t dt;
     double init_Power;
     GlobalConfig *gc;
+
+
+    //--------------------------------------------------------------------------------------
+    // Efficiency curves for the generators in the powerstation. 
+    // Qn	Pelton	Francis	Kaplan
+    // 0	0	0	0
+    // 0.1	50	40	55
+    // 0.2	75	65	75
+    // 0.3	86	80	84
+    // 0.4	90	88	89
+    // 0.5	92	91	91
+    // 0.6	91.5	92	92
+    // 0.7	90	91	91.5
+    // 0.8	88	88	91
+    // 0.9	85	83	90
+    // 1	82	78	88
+
+    // One of the problems with these curves is that it is slow to interpolate on them.
+    // To solve this we can use two methods.
+    // 1. Fit smooth equations to the data.
+    // 2. Use the data curve and interpolate on it.
+    // If the data are uniformly distributed - and only then, we have a fast lookup method.
+    // If the data are non-uniformly, we must use the slow method already implemented in ArrayCurve. 
+    
+    // Setup
+    //const int N = 100;          // table size
+    //double eta_table[N];        // precomputed efficiency values
+
+    // At runtime — no search needed
+    // double Qn = Q / Q_rated;    // normalize to 0-1
+    // int i = (int)(Qn * (N-1));  // direct index calculation
+    // double t = Qn * (N-1) - i;  // fractional part for interpolation
+    // double eta = eta_table[i] + t * (eta_table[i+1] - eta_table[i]);
+    //--------------------------------------------------------------------------------------
+
+
 
     double static_gen_efficiency;
     double headlosscoef;

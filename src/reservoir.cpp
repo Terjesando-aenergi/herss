@@ -60,7 +60,6 @@ Reservoir::Reservoir(){
 
     fast_overflow = false; 
 
-
     use_reservoir_geometry = false;
     width_m     = -1.0*NOT_INIT;
     length_m    = -1.0*NOT_INIT;
@@ -69,15 +68,13 @@ Reservoir::Reservoir(){
     slope_term  = -1.0*NOT_INIT; // tan((90.0 - theta) * PI / 180.0);
     geo_denom   = -1.0*NOT_INIT; // length_m * (slope_term + width_m);
 
-
     use_reservoir_curve = false;
-
+    use_spillway           = false;
+    use_overflow_curve     = false;
 
 }
 
 Reservoir::~Reservoir(){}
-
-
 
 
 int Reservoir::initArrayCurves(void) {
@@ -102,6 +99,7 @@ int Reservoir::initArrayCurves(void) {
     }
 
 
+
     //--------------------------------------------------------------------
     // Specify OVERFLOW_CURVE and number of points. If not used specify with "-9999"
     ac_ovefl_masl_2_m3s.nr_pts = this->nr_points_ovefl_curve;
@@ -111,6 +109,8 @@ int Reservoir::initArrayCurves(void) {
     }
     ac_ovefl_masl_2_m3s.initializeArrays();
 
+
+
     //ArrayCurve ac_ovefl_m3s_2_masl;
     ac_ovefl_m3s_2_masl.nr_pts = this->nr_points_ovefl_curve;
     for (int p = 0; p < ac_ovefl_m3s_2_masl.nr_pts; p++){
@@ -118,8 +118,6 @@ int Reservoir::initArrayCurves(void) {
         ac_ovefl_m3s_2_masl.y_points[p] = ovefl_curve_masl[p];
     }
     ac_ovefl_m3s_2_masl.initializeArrays();
-
-
 
     return 0;
 }
@@ -174,11 +172,6 @@ double Reservoir::CalcOverflow() {
                 //double ovefl_curve_m3s[MAX_NR_POINTS_CURVE];
                 //size_t nr_points_ovefl_curve;
 
-                // printf("Reservoir curve: \n");
-                // for(size_t t = 0; t < nr_points_res_curve; t++) {
-                //     printf("%.4f %.4f\n", res_curve_masl[t], res_curve_Mm3[t]);
-                // }
-
                 LOG_WARN("current_filling  = " + std::to_string(this->res_Mm3)); 
                 LOG_WARN("filling_at_hrw_Mm3 = " + std::to_string(filling_at_hrw_Mm3));
                 LOG_WARN("masl_start_overflow= " + std::to_string(masl_start_overflow));
@@ -218,7 +211,6 @@ double Reservoir::calcResMasl(double Mm3) {     // Returns masl
 ////////////////////////////////////////////////////////////////
 void Reservoir::InitReservoir(void) {
 
-
     for(size_t t = 0; t < S->stps; t++ ) {
         S->up_inflow[t]    = 0.0;
     }
@@ -256,6 +248,7 @@ void Reservoir::InitReservoir(void) {
 
 
     if(this->use_reservoir_geometry) {
+
         if(this->width_m <= 0.0 || this->length_m <= 0.0 || this->theta < 0.0 || this->theta >= 90.0) {
             LOG_ERR("Reservoir geometry is not initialized correctly, check width_m, length_m, theta");
         }
@@ -413,9 +406,6 @@ int Reservoir::Simulate(size_t t) {
         }
     #endif
 
-
-
-
     total_inflow_Mm3 = S->inflow[t]+S->up_inflow[t];
     total_inflow_Mm3 = MACRO_m3s_2_Mm3(total_inflow_Mm3,S->dt);
 
@@ -428,7 +418,6 @@ int Reservoir::Simulate(size_t t) {
     this->res_Mm3 += MACRO_m3s_2_Mm3(S->up_inflow[t],S->dt);  // Mm3   All initialized to zero 
 
     ValidateReservoirLevelMm3(t, this->res_Mm3);
-
 
     // Update filling height - Testing without updating this 27June20205, BVM
     // this->res_masl = ac_res_Mm3_2_masl.x2y(this->res_Mm3);
@@ -476,22 +465,24 @@ int Reservoir::Simulate(size_t t) {
     }
 
 
-
-
     //-------------------------------------------------------------------
     // OUTLET HATCH
     if(outlet_hatch_in_use) {
-
         hatchflow_Mm3 = 0.0;
+
+        if(S->action[t][this->idnr] < -0.000001 || S->action[t][this->idnr] > 1.000001) {
+            LOG_WARN("ERROR: Action for hatch is out of bounds: " + std::to_string(S->action[t][this->idnr]));
+            LOG_WARN("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+            LOG_ERR("Check your action file, and make sure the action for the hatch is between 0.0 and 1.0");
+        }
+
+
         if(this->res_masl > this->hatch_masl ) {
             // Some places we need to release water regardless of the actions set 
             // This can be done by setting minQ_hatch to a low level.
             hatchflow_Mm3 = this->minQ_hatch + S->action[t][this->idnr]*(this->maxQ_hatch - this->minQ_hatch);
-
             hatchflow_Mm3 = MACRO_m3s_2_Mm3(hatchflow_Mm3, S->dt);  // Mm3
-
             current_filling = ac_res_masl_2_Mm3.x2y(this->res_masl);
-
             max_hatchflow = current_filling - filling_at_hatchlevel;
 
             if (hatchflow_Mm3 > max_hatchflow) {
@@ -507,9 +498,7 @@ int Reservoir::Simulate(size_t t) {
             ValidateReservoirLevelMm3(t, this->res_Mm3);
             this->res_masl = ac_res_Mm3_2_masl.x2y(this->res_Mm3);
         }
-
     }
-
 
 
     // AUTO HATCH 
@@ -550,7 +539,6 @@ int Reservoir::Simulate(size_t t) {
     ptr_downstream_node_overflow->S->up_inflow[t] += MACRO_Mm3_2_m3s(overflow_Mm3, this->dt);  // m3/s
     this->res_Mm3 -= overflow_Mm3;
 
-
     // Update the reservoir masl
     if(this->use_reservoir_geometry) {
         this->res_masl = this->calcResMasl(this->res_Mm3);
@@ -558,11 +546,6 @@ int Reservoir::Simulate(size_t t) {
         ValidateReservoirLevelMm3(t, this->res_Mm3);
         this->res_masl = ac_res_Mm3_2_masl.x2y(this->res_Mm3);
     }
-
-
-
-
-
     
     // There is a treshold here. We make the penalty dependent on how much below LRW we are
     // This is so we can see an improvement when we do gradient optimization.
@@ -587,7 +570,7 @@ int Reservoir::Simulate(size_t t) {
 
     // We only value water up to HRW
     remaining_active_Mm3 = fract_filling  * (filling_at_hrw_Mm3 - filling_at_lrw_Mm3);
-    
+
     if(fract_filling > 1.0) {
         remaining_active_Mm3 = (filling_at_hrw_Mm3 - filling_at_lrw_Mm3);
     }
@@ -613,7 +596,6 @@ int Reservoir::Simulate(size_t t) {
     S->overflow_Mm3[t]    = overflow_Mm3;
     S->cost[t]            = cost_lrw;
     S->Power[t]           = 0.0;  // No power production in reservoirs
-
 
     double tot_out        = hatchflow_Mm3 + tunnelflow_Mm3 + overflow_Mm3 + outlet_auto_qmin_flow_Mm3;
     S->tot_outflow[t]     = MACRO_Mm3_2_m3s(tot_out, this->dt);
@@ -641,16 +623,9 @@ int Reservoir::ReadNodeData(string filename){
     size_t tmp_idnr;
     string token;
 
-    cout << "Reservoir::ReadNodeData      nodename: " << nodename << ", idnr: " << idnr << ", nodetype: " << EnumToString(nodetype) << "\n";
-
-    if(gc->use_reservoir_geometry) {
-        LOG_INFO("Reservoir geometry is used");
-    }
-    
     // We have the whole topology file saved in the Topoparser in GlobalConfig. 
     // We first extract single value variables. 
     // Then we extract the reservoir curve and overflow curve.
-
     bool inside_node = false;
 
 
@@ -854,9 +829,11 @@ int Reservoir::ReadNodeData(string filename){
 
                     if ( keyword2.compare("BOTTOM_MASL") == 0 ) {
                         this->bottom_masl = atof(value2.c_str() );
+                        this->use_reservoir_geometry = true;
                     }
 
                     if ( keyword2.compare("RESERVOIR_CURVE") == 0 ) {
+                        this->use_reservoir_curve = true;
                         this->nr_points_res_curve = atoi(value2.c_str() );
                         if( nr_points_res_curve > MAX_NR_POINTS_CURVE) {
                             LOG_ERR("ERROR: nr_points_res_curve > MAX_NR_POINTS_CURVE ");
@@ -912,17 +889,17 @@ int Reservoir::ReadNodeData(string filename){
     }
 
 
-    if(gc->use_reservoir_geometry) {
-        // Check if we have the necessary variables to calculate the reservoir geometry.
-        if(width_m <= 0.0 || length_m <= 0.0 || theta <= 0.0 || bottom_masl < 0.0) {
-            LOG_ERR("ERROR: To use reservoir geometry, you need to set WIDTH_M, LENGTH_M, THETA and BOTTOM_MASL in the topology file for reservoir " + nodename);
-        } 
+    if(this->use_reservoir_geometry) {
+         // Check if we have the necessary variables to calculate the reservoir geometry.
+         if(width_m <= 0.0 || length_m <= 0.0 || theta <= 0.0 || bottom_masl < 0.0) {
+             LOG_ERR("ERROR: To use reservoir geometry, you need to set WIDTH_M, LENGTH_M, THETA and BOTTOM_MASL in the topology file for reservoir " + nodename);
+         } 
     }
 
-    this->use_reservoir_geometry = gc->use_reservoir_geometry;
-    this->use_reservoir_curve = gc->use_reservoir_curve;
-
-
+    if(this->use_reservoir_geometry && this->use_reservoir_curve) {
+        LOG_ERR("ERROR: You cannot use both reservoir geometry and reservoir curve in the same reservoir " 
+            + nodename + ". Please choose one of them in the topology file.");
+    }
 
     return 0;
 }
@@ -982,9 +959,7 @@ int Reservoir::ReadStateFile(string filename){
 }
 //------------------------------------------------------------------------
 double Reservoir::GetStartWater_Mm3(void) {
-    // Starting water volume.
-    filling_at_lrw_Mm3 = ac_res_masl_2_Mm3.x2y(this->res_LRW);
-    filling_at_hrw_Mm3 = ac_res_masl_2_Mm3.x2y(this->res_HRW);
+
     double start_res_Mm3 = filling_at_lrw_Mm3 + reservoir_init_fr * (filling_at_hrw_Mm3 - filling_at_lrw_Mm3);
     return start_res_Mm3;
 }
@@ -1042,10 +1017,8 @@ int Reservoir::WriteStateFile(FILE *fp) {
 // CHANGE BY OVE: CheckWaterBalance method that uses variable timesteps
 int Reservoir::CheckWaterBalance(class Herss *herss_obj) { 
 
-    // Starting water volume.
-    filling_at_lrw_Mm3 = ac_res_masl_2_Mm3.x2y(this->res_LRW);
-    filling_at_hrw_Mm3 = ac_res_masl_2_Mm3.x2y(this->res_HRW);
     double start_res_Mm3 = filling_at_lrw_Mm3 + reservoir_init_fr * (filling_at_hrw_Mm3 - filling_at_lrw_Mm3);
+
     double sum_inflow  = 0.0;
     double sum_outflow = 0.0;
 
@@ -1059,7 +1032,6 @@ int Reservoir::CheckWaterBalance(class Herss *herss_obj) {
     // Ending water volume
     double end_res_Mm3 = this->res_Mm3;
     double waterbalance = start_res_Mm3 + sum_inflow - end_res_Mm3 - sum_outflow;
-
 
     if(WATERBALANCE_WARNINGS) {
         printf( "WATERBALANCE RESERVOIR (Variable Timesteps) idnr=%d  nodename=%s\n", int(idnr), nodename.c_str()  );
