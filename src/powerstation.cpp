@@ -21,8 +21,6 @@ Powerstation::Powerstation(){
     powstat_startstop       = -1.0 * NOT_INIT;
     init_Power              = -1.0 * NOT_INIT;
     aggressive_actions_cost = -1.0 * NOT_INIT;
-
-    // WIP 
     
 }
 
@@ -37,8 +35,6 @@ void Powerstation::ValidatePowerstationSettings() {
             + std::to_string(int(idnr)) 
             + " (" + nodename + ") is out of bounds: " 
             + std::to_string(nr_generators));
-
-
 
     }
 
@@ -94,6 +90,12 @@ int Powerstation::Simulate(size_t t) {
         }
         Q_gen[g] = Q;
         total_Q += Q;
+
+        if( generators[g].action[t] < -0.000001 || generators[g].action[t] > 1.000001) {
+            LOG_WARN("ERROR: Action for generator " + std::to_string(g) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ") is out of bounds: " + std::to_string(generators[g].action[t]));
+            LOG_ERR("Check your action file, and make sure the action for generator " + std::to_string(g) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ") is between 0.0 and 1.0");
+        }
+
     }
 
 

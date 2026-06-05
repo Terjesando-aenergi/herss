@@ -73,6 +73,13 @@ Riversystem::Riversystem(GlobalConfig *gc) {
                 break;
         }
     }
+
+
+
+
+
+
+    
 }
 ///////////////////////////////////////////////////////////////////
 Riversystem::~Riversystem(){
