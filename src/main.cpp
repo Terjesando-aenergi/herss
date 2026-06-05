@@ -75,13 +75,9 @@ int main(int argc, char *argv[]) {
     
     gc->readGlobalFile();
     gc->SetDirectoriesAndFilenames();
-    gc->Diagnose();
+    gc->Diagnose();  // Reads topology file into parser 
 
     gc->checkNrSteps();  // This can be voided if you want to set stps manually before allocation of objects
-
-    if(gc->use_reservoir_geometry) {
-        LOG_INFO("Using reservoir geometry for calculating reservoir filling and masl. ");
-    }
 
     if(gc->printglobalinfo) {
         gc->printGlobalInfo();
@@ -100,9 +96,12 @@ int main(int argc, char *argv[]) {
     herss->rs->DiagnoseRiversystemConfiguration();
 
     LOG_MSG("Initialisation looks good. Starting simulation..... ");
+    
     herss->Simulate();
+    
 
     herss->CheckWaterBalance();
+
     herss->GlobalWaterBalance();
     herss->CalcAdjustmenCosts();
     
