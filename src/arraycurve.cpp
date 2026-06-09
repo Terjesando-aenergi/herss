@@ -114,8 +114,19 @@ double ArrayCurve::x2y(double x) {
         return -1.0 * VERY_LARGE_NUMBER;
     }
 
-    int idx;
-    idx = int(  0.5 +  ( xt - x_points[0]) / (x_points[nr_pts-1] - x_points[0]) * double(POINTS_IN_ARRAY)) ;
+       // Change by Terje 2024-06-11. The original method can give an index that is out of bounds when xt is very close to xmax, due to rounding. 
+    // The new method calculates the fraction of the way through the x range, and then scales that to the number of points in the array. This should give a more robust index calculation, even when xt is near xmax. 
+    // The new method also includes checks to ensure that the index is within bounds, and that the fraction is between 0 and 1. 
+    // If xt is outside the range of x_points, it will log a warning and return a large negative number to indicate an error.
+    double frac = (xt - x_points[0]) / (x_points[nr_pts-1] - x_points[0]);
+
+    if (frac < 0.0) frac = 0.0;
+    if (frac > 1.0) frac = 1.0;
+
+    int idx = int(frac * double(POINTS_IN_ARRAY));
+
+    if (idx >= POINTS_IN_ARRAY) idx = POINTS_IN_ARRAY - 1;
+    if (idx < 0) idx = 0;
 
     if(xt < x_points[0] || xt > x_points[nr_pts-1]) {
         
