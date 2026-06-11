@@ -1,5 +1,8 @@
 RESERVOIR node 2 HJELLE
-reservoir_init_fr= 0.80000
+reservoir_init_fr= 0.80000  masl=370.811
+Filling at HRW [Mm3] = 9.16667
+Filling at LRW [Mm3] = 1.00000
+Active reservoir capacity [Mm3] = 8.16667
 yyyy mm dd hh [m3/s] [Euro/MWh] [fr] [m3/s] [Mm3] [masl] [fr] [Euro]         [m3/s]     [m3/s]    [m3/s]   [m3/s]    [m3/s] 
 yyyy mm dd hh Inflow Price Action Up_Inflow Res_Mm3 Res_masl Res_fr lrw_cost tunnelflow hatchflow overflow auto_qmin tot_outflow
 2026 5 7 0 10.0000 24.8800 1.0000 100.0000 7.9257 369.8480 0.8480 0.0000 0.0000 1.0000 0.0000 0.0000 1.0000 

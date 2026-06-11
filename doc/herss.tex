@@ -15,6 +15,7 @@
 \usepackage{url}
 
 
+
 %% \newcommand{\cmd}[1]{\texttt{#1}}
 \newcommand{\cmd}[1]{\textbf{\texttt{#1}}}
 \newcommand{\folder}[1]{\texttt{#1}}
@@ -81,6 +82,7 @@
 	\section{Installation instructions} 
 	Download files from GitHub and unpack in a project directory. You should have a directory
 	structure as shown in the figure below:
+	
 	\vspace{1em}
 	
 	
@@ -486,6 +488,7 @@
 	example a fixed environmental flow obligation. Up to five seasonal periods may be
 	defined, each with its own minimum discharge.
 	
+	
 	\item[Overflow (\texttt{OVERFLOW\_CURVE})] Uncontrolled spillage over the dam crest,
 	described by a piecewise-linear curve mapping reservoir elevation to overflow discharge
 	[m$^3$/s]. Overflow is computed last, after all controlled outlets have been evaluated,
@@ -505,6 +508,86 @@
 	\newpage 
 
 
+
+	\subsubsection{Reservoir geometry}
+
+	As an alternative to specifying a measured volume--elevation curve (\texttt{RESERVOIR\_CURVE}), the reservoir shape can be described by a simple parametric geometry  (\texttt{RESERVOIR\_GEOMETRY})  . This option is activated by supplying the five keywords \texttt{RESERVOIR\_GEOMETRY}, \texttt{WIDTH\_M}, \texttt{LENGTH\_M}, \texttt{THETA}, and \texttt{BOTTOM\_MASL} in the reservoir node block. The two representations are mutually exclusive; using both in the same node will cause a model error.
+
+	\paragraph{Geometric model}
+
+	The reservoir is approximated as a rectangular basin with uniform cross-section along its length. The side slopes are parameterised by the angle $\theta$, measured from the horizontal. A derived slope term is computed once at initialisation:
+
+	\begin{figure}[h]
+		\centering
+		\includegraphics[width=0.7\textwidth]{./figures/reservoir1.pdf}
+		\caption{Reservoir with parametric geometry}
+		\label{fig:reservoir_geo}
+	\end{figure}
+
+
+	\begin{equation}
+		s = \tan\!\left(\frac{(90 - \theta)\,\pi}{180}\right)
+	\end{equation}
+
+	The stored volume at water surface elevation $z$ [m.a.s.l.] is then:
+
+	\begin{equation}
+		V(z) = \frac{h \cdot (s + W) \cdot L}{10^6} \quad [\text{Mm}^3]
+	\end{equation}
+
+	\noindent where $h = z - z_\text{bottom}$ is the depth above the reservoir floor and $W$, $L$ are the bottom width and length respectively. The inverse relation, used to convert a stored volume back to a water surface elevation, is:
+
+	\begin{equation}
+		z = z_\text{bottom} + \frac{V \times 10^6}{L \cdot (s + W)}
+	\end{equation}
+
+	Both relations are linear in $h$ (or $V$), making the geometry computationally inexpensive compared to table interpolation on a measured curve.
+
+	\paragraph{Physical interpretation of $\theta$}
+
+	The angle $\theta$ describes the inclination of the valley sides:
+	\begin{itemize}
+		\item $\theta \to 90°$: nearly vertical side walls, approximately rectangular cross-section ($s \to 0$).
+		\item $\theta \to 0°$: very gently sloping valley ($s \to \infty$, large effective width per unit depth).
+	\end{itemize}
+	A value of $\theta = 20°$ represents a moderately V-shaped valley.
+
+	\paragraph{Topology file syntax}
+
+\begin{verbatim}
+	RESERVOIR_GEOMETRY
+	WIDTH_M    1000
+	LENGTH_M   1000
+	THETA      20
+	BOTTOM_MASL  745.0
+\end{verbatim}
+
+\noindent The parameters are:
+\begin{center}
+	\begin{tabular}{lll}
+		\hline
+		Keyword & Type & Description \\
+		\hline
+		\texttt{WIDTH\_M}     & float & Bottom width of the reservoir [m] \\
+		\texttt{LENGTH\_M}    & float & Length of the reservoir [m] \\
+		\texttt{THETA}        & float & Side-slope angle from horizontal [degrees], $0 < \theta < 90$ \\
+		\texttt{BOTTOM\_MASL} & float & Elevation of the reservoir floor [m.a.s.l.] \\
+		\hline
+	\end{tabular}
+\end{center}
+
+\paragraph{Constraints and notes}
+
+\begin{itemize}
+	\item \texttt{RESERVOIR\_GEOMETRY} and \texttt{RESERVOIR\_CURVE} are mutually exclusive; specifying both will cause a model error.
+	\item \texttt{WIDTH\_M} and \texttt{LENGTH\_M} must be positive; \texttt{THETA} must satisfy $0 < \theta < 90$.
+	\item \texttt{BOTTOM\_MASL} must be non-negative and physically plausible.
+	\item The geometry-based volume--elevation relationship is linear, which is a simplification. For reservoirs with strongly irregular bathymetry a measured \texttt{RESERVOIR\_CURVE} is more accurate.
+\end{itemize}
+
+
+
+
 	\subsubsection{Fast Overflow}
 	\label{subsubsec:fast_overflow}
 
@@ -518,6 +601,78 @@
 	This avoids the curve look-up and is numerically more stable for coarse time steps. To enable
 	it, set \texttt{FAST\_OVERFLOW TRUE} for the relevant reservoir in the topology file.
 
+
+
+
+	\subsubsection{Spillway}
+
+	A spillway is a fixed-crest overflow structure that releases water from a reservoir once the water surface elevation exceeds the crest level. It is one of two mutually exclusive methods available for modelling uncontrolled overflow; the other is the \texttt{OVERFLOW\_CURVE}. Both methods cannot be active simultaneously for the same reservoir node.
+
+	\paragraph{Discharge formula}
+
+	The spillway discharge is computed using the standard broad-crested weir formula:
+
+	\begin{equation}
+		Q = C \cdot L \cdot H^{3/2}
+		\label{eq:spillway}
+	\end{equation}
+
+	\noindent where:
+	\begin{itemize}
+		\item $Q$ \quad is the spillway discharge [m$^3$/s],
+		\item $C$ \quad is the dimensionless discharge coefficient [--],
+		\item $L$ \quad is the crest length [m],
+		\item $H = z_\text{res} - z_\text{crest}$ \quad is the head above the spillway crest [m], computed as the difference between the current reservoir water surface elevation $z_\text{res}$ and the fixed crest elevation $z_\text{crest}$, both in metres above sea level (m.a.s.l.).
+	\end{itemize}
+
+	Discharge is zero whenever $z_\text{res} \leq z_\text{crest}$.
+
+	\paragraph{Volume limitation}
+
+	The computed discharge volume per time step is capped to prevent the reservoir from draining below the spillway crest level:
+
+	\begin{equation}
+		\Delta V_\text{overflow} = \min\!\left(Q \cdot \Delta t,\; V_\text{res} - V_\text{crest}\right)
+	\end{equation}
+
+	\noindent where $V_\text{res}$ is the current stored volume and $V_\text{crest}$ is the reservoir volume corresponding to $z_\text{crest}$. This ensures numerical stability with large time steps.
+
+	\paragraph{Topology file syntax}
+
+	The spillway is configured in the topology file with a single line inside the reservoir node block:
+
+	\begin{verbatim}
+		SPILLWAY  downstream_idnr  C  L  spillway_level_masl
+	\end{verbatim}
+
+	\noindent The parameters are:
+	\begin{center}
+		\begin{tabular}{lll}
+			\hline
+			Field & Type & Description \\
+			\hline
+			\texttt{downstream\_idnr}      & integer & Node ID receiving the spillway discharge \\
+			\texttt{C}                     & float   & Discharge coefficient \\
+			\texttt{L}                     & float   & Crest length [m] \\
+			\texttt{spillway\_level\_masl} & float   & Crest elevation [m.a.s.l.] \\
+			\hline
+		\end{tabular}
+	\end{center}
+
+	The downstream node must not be the same as the reservoir itself. The crest elevation $z_\text{crest}$ may be set below the high reservoir water level (HRW), in which case spillway discharge can occur while the reservoir is still below its design maximum.
+
+	\paragraph{Constraints and notes}
+
+	\begin{itemize}
+	\item \texttt{SPILLWAY} and \texttt{OVERFLOW\_CURVE} are mutually exclusive for a given reservoir; specifying both will cause a model error.
+	\item The discharge coefficient $C$ must be in the range $(0,\,100]$ and the crest length $L$ must be positive.
+	\item The crest elevation must be a physically plausible value (positive and below the summit of Mount Everest, used internally as an upper sanity bound).
+	\item If the \texttt{FAST\_OVERFLOW} flag is set to \texttt{TRUE}, the normal weir formula is bypassed and the overflow volume is set directly to the volume exceeding HRW. This is a simplified, computationally cheaper approximation and is not recommended when accurate spillway hydraulics are required.
+	\end{itemize}
+
+
+
+
 	\subsubsection{LRW Penalty Cost}
 	\label{subsubsec:lrw_penalty}
 
@@ -529,8 +684,8 @@
 	where $p$ is the penalty parameter \texttt{RES\_PENALTY}, $\Delta t$ is the time step in
 	seconds, and $h$ is the current water surface elevation [masl]. The linear dependence on the
 	depth of violation ensures a smooth, differentiable cost function that provides a meaningful
-	gradient signal for optimisation algorithms: a deeper violation produces a proportionally
-	larger cost.
+	gradient signal for optimization algorithms: a deeper violation produces a proportionally
+	larger cost. Note that aggressive actions can impact this. 
 
 	\newpage
 
@@ -608,7 +763,76 @@
 		$Q = a \cdot Q_\mathrm{max}$.
 	\end{itemize}
 
-	Each generator requires a corresponding action column in the actions input file.
+	Each generator requires a corresponding action column in the actions input file. \newline
+	
+	
+	\subsubsection{Uniform normalised turbine efficiency curve}
+	
+	As a faster alternative to the general \texttt{TURBINE\_CURVE}, a generator's efficiency can be specified using a uniformly-sampled normalised curve via the \texttt{UNIFORM\_NORMALIZED\_CURVE} keyword. Because the sample points are equally spaced in normalised discharge, the correct table entry can be found by direct index calculation rather than a binary search, making simulation runs significantly faster when many function evaluations are performed.
+	
+	\paragraph{Definition}
+	
+	The curve is defined by exactly $N = 11$ efficiency values $\eta_k$ sampled at normalised discharges
+	
+	\begin{equation}
+		Q_n^{(k)} = \frac{k}{N-1}, \quad k = 0, 1, \ldots, N-1
+	\end{equation}
+	
+	\noindent i.e.\ at $Q_n \in \{0.0,\, 0.1,\, 0.2,\, \ldots,\, 1.0\}$, where the normalised discharge is defined as
+	
+	\begin{equation}
+		Q_n = \frac{Q}{Q_\text{max}}
+	\end{equation}
+	
+	\noindent and $Q_\text{max}$ is the \texttt{GENERATOR\_MAX\_DISCHARGE} for that generator.
+	
+	\paragraph{Interpolation at runtime}
+	
+	Given an actual discharge $Q$, the efficiency is evaluated by:
+	
+	\begin{align}
+		Q_n &= Q \;/\; Q_\text{max} \\
+		i   &= \lfloor Q_n \cdot (N-1) \rfloor \\
+		t   &= Q_n \cdot (N-1) - i \\
+		\eta &= \eta_i + t\,(\eta_{i+1} - \eta_i)
+	\end{align}
+	
+	\noindent This is a simple linear interpolation with $O(1)$ index access. The returned fractional efficiency is $\eta / 100$.
+	
+	\paragraph{Topology file syntax}
+	
+	The keyword replaces \texttt{TURBINE\_CURVE} inside a \texttt{GENERATOR} block and must always be followed immediately by \texttt{GENERATOR\_MAX\_DISCHARGE}:
+	
+	\begin{verbatim}
+		GENERATOR 0
+		UNIFORM_NORMALIZED_CURVE 11
+		0.0   0.0
+		0.1  50.0
+		0.2  75.0
+		0.3  86.0
+		0.4  90.0
+		0.5  92.0
+		0.6  91.5
+		0.7  90.0
+		0.8  88.0
+		0.9  85.0
+		1.0  82.0
+		GENERATOR_MAX_DISCHARGE 4.0
+	\end{verbatim}
+	
+	\noindent The first column is the normalised discharge $Q_n$ and is for human readability only; the parser reads only the second column (efficiency in percent). The integer after \texttt{UNIFORM\_NORMALIZED\_CURVE} must equal $N = 11$; any other value will cause a model error.
+	
+	\paragraph{Constraints and notes}
+	
+	\begin{itemize}
+		\item \texttt{UNIFORM\_NORMALIZED\_CURVE} and \texttt{TURBINE\_CURVE} are mutually exclusive within a single generator block.
+		\item Exactly 11 efficiency values must be provided, corresponding to $Q_n = 0.0, 0.1, \ldots, 1.0$.
+		\item Efficiency values are given in percent [\%]; they are divided by 100 internally before use.
+		\item If the discharge passed to the efficiency function is below $10^{-6}$ m$^3$/s the function returns zero without consulting the curve.
+		\item Discharges above \texttt{GENERATOR\_MAX\_DISCHARGE} are treated as an error; the simulation will abort with a diagnostic message.
+	\end{itemize}
+	
+	
 
 	\subsubsection{Penstock Configuration}
 
@@ -656,6 +880,20 @@
 	This mechanism can be useful in e.g. optimization. It denies requesting physically impossible discharges while
 	still providing a strong gradient signal to drive the solution away from infeasible regions.
 	\newpage 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 	\subsection{Channel}
 	\label{subsec:channel}
@@ -1541,10 +1779,6 @@
 	https://www.forbrukerradet.no/strompris/spotpriser/. 
 	Note that HERSS is agnostic to the currency units used. It could be NOK/MWh, Euro/MWH. 
 	
-		
-	
-	
-	
 	
 	
 	\subsubsection{Actions}
@@ -1553,8 +1787,27 @@
 		
 
 	\subsubsection{uTAHPS datasets}
-	There are five different datasets available for the uTAHPS. These are located in the following folders: 
-	\folder{./mini\_utahps\_daily}, \folder{./mini\_utahps\_hourly}, \folder{./utahps\_daily/}, \folder{./utahps\_hourly/}, \folder{./utahps\_multires/}. They have all been tested with the latest version of the \file{herss.exe}. Some of the datasets have also been used in previous chapters. 
+	There are several different datasets available for the uTAHPS. These are located under the folder \folder{./data/}. They have all been tested with the latest version of the \file{herss.exe}. Some of the datasets have also been used in previous chapters. The different datasets are designed to test different types of features. Take a look in the topology files and timeseries files to see how different features are used. 
+
+	\vspace{1em}
+	\dirtree{%
+	.1 herss/.
+	.2 data/.
+	.3 mini\_utahps\_daily/.
+	.3 mini\_utahps\_hourly/.
+	.3 mini\_utahps\_spillway/.
+	.3 mini\_utahps\_new\_inputformat/.
+	.3 res\_casc\_A/.
+	.3 res\_casc\_B/.
+	.3 res\_casc\_C/.
+	.3 res\_casc\_D/.
+	.3 utahps\_daily/.
+	.3 utahps\_hourly/.
+	.3 utahps\_multires/.
+	.3 utahps\_daily\_new\_format/.
+	}	
+	\vspace{1em}
+
 	
 	Figure \ref{fig:utahps_multires} shows a plot of the timeseries data avaiable in the \folder{./utahps\_multires/}.
 

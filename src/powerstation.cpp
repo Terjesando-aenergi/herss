@@ -21,6 +21,8 @@ Powerstation::Powerstation(){
     powstat_startstop       = -1.0 * NOT_INIT;
     init_Power              = -1.0 * NOT_INIT;
     aggressive_actions_cost = -1.0 * NOT_INIT;
+    shared_penstock         = false;   
+    nr_generators           = 0;       
     
 }
 
@@ -63,6 +65,48 @@ void Powerstation::ValidatePowerstationSettings() {
 
 }
 ////////////////////////////////////////////////////////////////
+double Powerstation::calcEfficiency(size_t gen_idx, double q_m3s) {  // Calculate the efficiency for a specific generator and discharge.
+
+    if(q_m3s < 0.0) {
+        LOG_WARN("ERROR: Discharge is negative for generator " + std::to_string(gen_idx) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + "): Q = " + std::to_string(q_m3s));
+        LOG_ERR("Check your action file, and make sure the discharge for generator " + std::to_string(gen_idx) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ") is not negative");
+    }
+
+    if(q_m3s > generators[gen_idx].max_discharge * 1.000001) {
+        LOG_WARN("ERROR: Discharge is above maximum for generator " + std::to_string(gen_idx) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + "): Q = " + std::to_string(q_m3s) + ", max_discharge = " + std::to_string(generators[gen_idx].max_discharge));
+        LOG_ERR("Check your action file, and make sure the discharge for generator " + std::to_string(gen_idx) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ") is not above the maximum discharge of the generator");
+    }
+
+    if(gen_idx < 0) {
+        LOG_ERR("ERROR: Generator index is negative in powerstation " + std::to_string(int(idnr)) + " (" + nodename + "): gen_idx = " + std::to_string(gen_idx));
+    }
+
+    if(q_m3s < 0.000001) {
+        return 0.0;
+    }
+
+    if(generators[gen_idx].use_uniform_normalized_curve) {
+        // We use the fast lookup method for uniform curves. 
+        double Qn = q_m3s / generators[gen_idx].max_discharge;    // normalize to 0-1
+        int i = (int)(Qn * (N_UNIFORM_EFF_CURVE_POINTS-1));  // direct index calculation
+        double t = Qn * (N_UNIFORM_EFF_CURVE_POINTS-1) - i;  // fractional part for interpolation
+        double eta = generators[gen_idx].uniform_normalized_curve[i] + t * (generators[gen_idx].uniform_normalized_curve[i+1] - generators[gen_idx].uniform_normalized_curve[i]);
+        // cout << "Uniform normalized curve: gen_idx = " << gen_idx << ", Q = " << q_m3s << ", Qn = " << Qn << ", i = " << i << ", t = " << t << ", eta = " << eta << "\n";
+        return eta / 100.0;
+    }
+
+    if (gen_idx >= generators.size()) {
+        LOG_ERR("ERROR: Generator index out of bounds in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ")");
+        return 0.0;
+    }
+
+    // Default is to use old code with array curves. 
+    return generators[gen_idx].eff_curve.x2y(q_m3s) / 100.0;
+
+}
+////////////////////////////////////////////////////////////////
+
+
 int Powerstation::Simulate(size_t t) {
 
     // CHANGE BY OVE: Initialize all parameters as 0.0
@@ -79,7 +123,6 @@ int Powerstation::Simulate(size_t t) {
     double total_Power = 0.0;
     double income = 0.0;
     double startstopCost = 0.0;
-
     std::vector<double> Q_gen(generators.size(), 0.0); // Flow for each generator
 
     // CHANGES BY OVE: Calculate flow for each generator and powerstation total flow
@@ -90,41 +133,50 @@ int Powerstation::Simulate(size_t t) {
         }
         Q_gen[g] = Q;
         total_Q += Q;
-
         if( generators[g].action[t] < -0.000001 || generators[g].action[t] > 1.000001) {
             LOG_WARN("ERROR: Action for generator " + std::to_string(g) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ") is out of bounds: " + std::to_string(generators[g].action[t]));
             LOG_ERR("Check your action file, and make sure the action for generator " + std::to_string(g) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ") is between 0.0 and 1.0");
         }
-
     }
 
 
-    // BVM May 2026. 
-    // At some point revisit this to check if we hsould use the minimum discharge as a hard constrain or soft constrain. 
-    // For now we use it as a soft constrain. 
+    // BVM June 2026. 
+    // Fixing bug related to aggressive actions
+    if (total_Q > S->up_inflow[t] * 1.000001) {
+        LOG_WARN("Agressive actions " + std::to_string(total_Q) + " m3/s) exceeds inflow (" + std::to_string(S->up_inflow[t]) + " m3/s) at timestep " + std::to_string(t) + " for node " + std::to_string(int(idnr)) + " (" + nodename + ")\n");
+        //LOG_INFO("Aggressive actions?  total_Q > S->up_inflow[t]  ");
+        // LOG_WARN("Aggressive actions?   total_Q > S->up_inflow[t]  ");
+        //LOG_WARN("Check your action file, and make sure the total discharge for the powerstation does not exceed the available inflow");
+        total_Q = 0.0;
+        for (size_t g = 0; g < generators.size(); ++g) { 
+            Q_gen[g] = 0.0;
+        }
+    }
+
+
+    // BVM May 2026.
+    // At some point revisit this to check if we should use the minimum discharge as a hard constrain or soft constrain.
+    // For now we use it as a soft constrain.
     if (total_Q > 0.001 && total_Q < powstat_min_discharge) {
         LOG_WARN("WARNING: Total powerstation flow " 
             + std::to_string(total_Q) + " m3/s) below minimum discharge (" + std::to_string(powstat_min_discharge) 
             + " m3/s) at timestep " + std::to_string(t) 
             + " for node " + std::to_string(int(idnr)) + " (" + nodename + ")\n");
     }
-
-
+    
     Hbrutto  = ((this->start_of_stp_masl + this->end_of_stp_masl)/2.0 ) - this->powstat_masl;
-
     
     // CHANGES BY OVE: Handle both shared and separate penstock configurations
     // SHARED PENSTOCK: All generators share the same penstock, head loss based on combined flow
+    // BVM June 2026, modified for several type of efficiency curves. 
+
     if (shared_penstock) {
         headloss = this->headlosscoef * total_Q * total_Q;
         Hnetto = Hbrutto - headloss; 
-        //printf("Shared penstock: total_Q = %.3f, headloss = %.3f\n", total_Q, headloss);
-
         
         for (size_t g = 0; g < generators.size(); ++g) {
             Q = Q_gen[g];
-            
-            turbine_efficiency = generators[g].eff_curve.x2y(Q) / 100.0;
+            turbine_efficiency = calcEfficiency(g, Q);
             
             if(turbine_efficiency < 0.0) {
                 LOG_WARN("ERROR:  Turbine efficiency is not working properly \n");
@@ -155,12 +207,8 @@ int Powerstation::Simulate(size_t t) {
         for (size_t g = 0; g < generators.size(); ++g) {
             Q = Q_gen[g];
             headloss = this->headlosscoef * Q * Q; 
-
             Hnetto   = Hbrutto - headloss; 
-            //printf("Separate penstock: Q = %.3f, headloss = %.3f\n", Q, headloss);
-
-            turbine_efficiency = generators[g].eff_curve.x2y(Q) / 100.0;
-
+            turbine_efficiency = calcEfficiency(g, Q);
             
             if(turbine_efficiency < 0.0) {
                 LOG_WARN("ERROR:  Turbine efficiency is not working properly \n");
@@ -217,11 +265,8 @@ int Powerstation::Simulate(size_t t) {
 
     // Estimating the local EEKV.
     double est_eekv = 0.0;
-    //printf( "POWERSTATION idnr=%d   nodename=%s    Q=%.3f  Power=%.3f \n", int(idnr), nodename.c_str() , Q, Power );
-    //printf("Power = %.3f  local_energy_equivalent = %.3f\n", Power, local_energy_equivalent);
     double est_GWh = total_Power / 1000;
     double q_Mm3 = MACRO_m3s_2_Mm3(total_Q, S->dt);  // Use variable timestep
-    //printf("q_Mm3 = %.3f\n", q_Mm3);
 
     if(total_Power > 0.0) {
         est_eekv = est_GWh / q_Mm3;
@@ -230,7 +275,6 @@ int Powerstation::Simulate(size_t t) {
     // Save timeseries 
     S->income[t]           = income;
     S->cost[t]             = startstopCost + aggressive_actions_cost;
-    
 
     // BVM , 15 oct 2024, 
     S->profit[t]           = income - startstopCost - aggressive_actions_cost;
@@ -239,12 +283,26 @@ int Powerstation::Simulate(size_t t) {
     S->Power[t]            = total_Power;
     S->EstimatedEEKV[t]    = est_eekv;
     S->startStopCost[t]    = startstopCost;
-    S->adjust_cost[t]      = aggressive_actions_cost;
+
+    S->adjust_cost[t]      = 0.0;  // We do not use this for now, but we keep it for later when we want to penalise adjustments.
+    S->cost_aggressive_actions[t] = aggressive_actions_cost;
+
     S->tot_outflow[t]      = total_Q;
     S->inflow[t]           = 0.0;  
 
     remaining_Mm3 = 0.0;  // The powerstation can never store water.
     remaining_active_Mm3 = 0.0;
+
+    double mydiff = abs(S->up_inflow[t] - S->tot_outflow[t]);
+    if(mydiff > 0.001 ) {
+        LOG_INFO("Warning: There is a difference between inflow and outflow in a powerstations.");
+        LOG_WARN("Warning: There is a difference between inflow and outflow in a powerstations.");
+        LOG_WARN("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+        LOG_INFO("t = " + std::to_string(t) + "  inflow = " + std::to_string(S->up_inflow[t]) + "  outflow = " + std::to_string(S->tot_outflow[t]) );
+        LOG_WARN("t = " + std::to_string(t) + "  inflow = " + std::to_string(S->up_inflow[t]) + "  outflow = " + std::to_string(S->tot_outflow[t]) );
+        LOG_ERR("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+    }
+
 
     return 0;
 }
@@ -260,8 +318,6 @@ int Powerstation::ReadNodeData(string filename) {
     string token;
 
     bool inside_node = false;
-
-    // cout << "Powerstation::ReadNodeData   nodename: " << nodename << ", idnr: " << idnr << ", nodetype: " << EnumToString(nodetype) << "\n";
     
     for (size_t i = 0; i < gc->topoparser.getLineCount(); ++i) {
 
@@ -384,17 +440,15 @@ int Powerstation::ReadNodeData(string filename) {
                         }
                         generators.resize(this->nr_generators);
 
-                        // We will now loop over the generators and extract the relevant data for each generator.
 
+                        // We will now loop over the generators and extract the relevant data for each generator.
                         size_t gen_data_lines = k+1; // Counter for the number of lines read for generator data
 
                         for(size_t g = 0; g < this->nr_generators; ++g) {
-                            
                             line = gc->topoparser.getLine(gen_data_lines);
                             keyword = line_obj.extractNextElementFromLine(&line);
                             value   = line_obj.extractNextElementFromLine(&line);
                             gen_data_lines++;
-
 
                             int gen_id = int(MAX_NR_GENERATORS) + 1;
                             if(keyword == "GENERATOR") {
@@ -409,45 +463,73 @@ int Powerstation::ReadNodeData(string filename) {
                             keyword = line_obj.extractNextElementFromLine(&line);
                             value   = line_obj.extractNextElementFromLine(&line);
                             gen_data_lines++;
-
-                            if(keyword != "TURBINE_CURVE") {
-                                LOG_ERR("ERROR: Expected TURBINE_CURVE for generator " + to_string(g));
-                            }
-
-
-                            size_t n_points = size_t(atoi(value.c_str()));
-                            generators[g].turb_virkn_Q.resize(n_points);
-                            generators[g].turb_virkn_psnt.resize(n_points);
                             
+                            if(keyword == "UNIFORM_NORMALIZED_CURVE") {
 
-                            for (size_t p = 0; p < n_points; ++p) {
+                                if(stoi(value) != N_UNIFORM_EFF_CURVE_POINTS) {
+                                    LOG_ERR("ERROR: Expected " + to_string(N_UNIFORM_EFF_CURVE_POINTS) + " points for UNIFORM_NORMALIZED_CURVE for generator " + to_string(g));
+                                }
+
+                                generators[g].use_uniform_normalized_curve = true;
+
+                                for (size_t p = 0; p < N_UNIFORM_EFF_CURVE_POINTS; ++p) {
+                                    line = gc->topoparser.getLine(gen_data_lines);
+                                    keyword = line_obj.extractNextElementFromLine(&line);
+                                    value   = line_obj.extractNextElementFromLine(&line);
+                                    generators[g].uniform_normalized_curve[p]    = atof(value.c_str());
+                                    // cout << "generators[g].uniform_normalized_curve[p] = " << generators[g].uniform_normalized_curve[p] << "\n";
+                                    gen_data_lines++;
+                                }
+
                                 line = gc->topoparser.getLine(gen_data_lines);
                                 keyword = line_obj.extractNextElementFromLine(&line);
                                 value   = line_obj.extractNextElementFromLine(&line);
-                                generators[g].turb_virkn_Q[p]    = atof(keyword.c_str());
-                                generators[g].turb_virkn_psnt[p] = atof(value.c_str());
-                                gen_data_lines++;
-                            }
-
-
-                            generators[g].eff_curve.nr_pts = n_points;
-                            for (size_t p = 0; p < n_points; ++p) {
-                                generators[g].eff_curve.x_points[p] = generators[g].turb_virkn_Q[p];
-                                generators[g].eff_curve.y_points[p] = generators[g].turb_virkn_psnt[p];
-                            }
-                            generators[g].eff_curve.initializeArrays();
-
-                            line = gc->topoparser.getLine(gen_data_lines);
-                            keyword = line_obj.extractNextElementFromLine(&line);
-                            value   = line_obj.extractNextElementFromLine(&line);
-                            gen_data_lines++;
                             
-                            if(keyword != "GENERATOR_MAX_DISCHARGE") {
-                                LOG_INFO("Powerstation::ReadNodeData   nodename: " + nodename + ", idnr: " + std::to_string(int(idnr)) + ", nodetype: " + EnumToString(nodetype));
-                                LOG_WARN("Powerstation::ReadNodeData   nodename: " + nodename + ", idnr: " + std::to_string(int(idnr)) + ", nodetype: " + EnumToString(nodetype));
-                                LOG_ERR("ERROR: Expected GENERATOR_MAX_DISCHARGE for generator " + to_string(g));
+                                if(keyword != "GENERATOR_MAX_DISCHARGE") {
+                                    LOG_INFO("Powerstation::ReadNodeData   nodename: " + nodename + ", idnr: " + std::to_string(int(idnr)) + ", nodetype: " + EnumToString(nodetype));
+                                    LOG_WARN("Powerstation::ReadNodeData   nodename: " + nodename + ", idnr: " + std::to_string(int(idnr)) + ", nodetype: " + EnumToString(nodetype));
+                                    LOG_ERR("ERROR: Expected GENERATOR_MAX_DISCHARGE for generator " + to_string(g));
+                                }
+                                generators[g].max_discharge = atof(value.c_str());
+                                gen_data_lines++;
+
+                            } // End if UNIFORM_NORMALIZED_CURVE
+
+                            if(keyword == "TURBINE_CURVE") {
+
+                                size_t n_points = size_t(atoi(value.c_str()));
+                                generators[g].turb_virkn_Q.resize(n_points);
+                                generators[g].turb_virkn_psnt.resize(n_points);
+
+                                for (size_t p = 0; p < n_points; ++p) {
+                                    line = gc->topoparser.getLine(gen_data_lines);
+                                    keyword = line_obj.extractNextElementFromLine(&line);
+                                    value   = line_obj.extractNextElementFromLine(&line);
+                                    generators[g].turb_virkn_Q[p]    = atof(keyword.c_str());
+                                    generators[g].turb_virkn_psnt[p] = atof(value.c_str());
+                                    gen_data_lines++;
+                                }
+
+
+                                generators[g].eff_curve.nr_pts = n_points;
+                                for (size_t p = 0; p < n_points; ++p) {
+                                    generators[g].eff_curve.x_points[p] = generators[g].turb_virkn_Q[p];
+                                    generators[g].eff_curve.y_points[p] = generators[g].turb_virkn_psnt[p];
+                                }
+                                generators[g].eff_curve.initializeArrays();
+
+                                line = gc->topoparser.getLine(gen_data_lines);
+                                keyword = line_obj.extractNextElementFromLine(&line);
+                                value   = line_obj.extractNextElementFromLine(&line);
+                                gen_data_lines++;
+                            
+                                if(keyword != "GENERATOR_MAX_DISCHARGE") {
+                                    LOG_INFO("Powerstation::ReadNodeData   nodename: " + nodename + ", idnr: " + std::to_string(int(idnr)) + ", nodetype: " + EnumToString(nodetype));
+                                    LOG_WARN("Powerstation::ReadNodeData   nodename: " + nodename + ", idnr: " + std::to_string(int(idnr)) + ", nodetype: " + EnumToString(nodetype));
+                                    LOG_ERR("ERROR: Expected GENERATOR_MAX_DISCHARGE for generator " + to_string(g));
+                                }
+                                generators[g].max_discharge = atof(value.c_str());
                             }
-                            generators[g].max_discharge = atof(value.c_str());
                             
                         }
                     }   
@@ -463,9 +545,7 @@ int Powerstation::ReadNodeData(string filename) {
 
     // Quality controle of the generator values after reading the topology file.
     for(size_t g = 0; g < generators.size(); ++g) {
-
         for(size_t p = 0; p < generators[g].turb_virkn_Q.size(); ++p) {
-
             if(generators[g].turb_virkn_Q[p] < 0.0) {
                 LOG_ERR("ERROR: Negative flow value in turbine curve for generator " + std::to_string(g) + " in powerstation " + std::to_string(int(idnr)) + " (" + nodename + ")");
             }
@@ -504,8 +584,6 @@ int Powerstation::ReadStateFile(string filename){
         if( line.length()  > 0 && ( line[0] != '#') ) {
             // Line is not empty and doesn't start with # (hash/pound sign)
             string str_tmpline = line;  // Create a copy of the line for parsing
-
-
             keyword = line_obj.extractNextElementFromLine(&line);
             value   = line_obj.extractNextElementFromLine(&line);
 
@@ -539,13 +617,10 @@ int Powerstation::ReadStateFile(string filename){
     myfile.close();
     if(!found_node) {
         LOG_WARN("Powerstation::ReadStateFile     idnr= " + std::to_string(int(idnr)) + "  nodename=" + nodename);
-
         LOG_INFO("This could have been caused by indexing of your nodes.");
         LOG_INFO("Start with zero at the top, and work your way down, to the outlet.");
-
         LOG_WARN("This could have been caused by indexing of your nodes.");
         LOG_WARN("Start with zero at the top, and work your way down, to the outlet.");
-        
         LOG_ERR("There is something wrong in the statefile " + filename);
     }
     return 0;
@@ -576,23 +651,28 @@ int Powerstation::CheckWaterBalance(class Herss *herss_obj) {
         printf( "WATERBALANCE POWERSTATION (Variable Timesteps) idnr=%d  nodename=%s\n", int(idnr), nodename.c_str()  );
         sum_inflow  = 0.0;
         sum_outflow = 0.0;
+
+        printf("t year month day hour inflow up_inflow tot_outflow ");
+        for (size_t g = 0; g < generators.size(); ++g) {
+            printf(" action_g%zu ", g);
+        }
+        printf(" sum_inflow sum_outflow diff\n");
+
         for(size_t t = 0; t < this->stps; t++) {
             int variable_dt = herss_obj->getDeltaT(t);
             sum_inflow += MACRO_m3s_2_Mm3( (this->S->inflow[t] + this->S->up_inflow[t]) , variable_dt);
             sum_outflow += MACRO_m3s_2_Mm3(this->S->tot_outflow[t], variable_dt);
 
-            printf("%d %d %d %d %d %.5f %.5f %.5f  actions", int(t), 
-                S->year[t], S->month[t], S->day[t], S->hour[t], 
+            printf("%d %d %d %d %d %.5f %.5f %.5f ", int(t), S->year[t], S->month[t], S->day[t], S->hour[t], 
                 MACRO_m3s_2_Mm3(this->S->inflow[t], variable_dt), 
                 MACRO_m3s_2_Mm3(this->S->up_inflow[t], variable_dt ),
                 MACRO_m3s_2_Mm3(this->S->tot_outflow[t], variable_dt));
 
             for (size_t g = 0; g < generators.size(); ++g) {
-                printf(" g%zu=%.5f", g, generators[g].action[t]);
+                printf(" %.5f ", generators[g].action[t]);
             }
 
-            printf("  sum_in= %.6f  sum_out= %.6f diff= %.6f \n",
-                sum_inflow, sum_outflow , sum_inflow - sum_outflow );
+            printf(" %.6f  %.6f %.6f \n", sum_inflow, sum_outflow , sum_inflow - sum_outflow );
         }
 
         LOG_WARN("WATERBALANCE POWERSTATION  idnr=" + std::to_string(int(idnr)) + "  nodename=" + nodename);
@@ -627,23 +707,24 @@ int Powerstation::WriteNodeOutput(GlobalConfig *gc) {
         LOG_ERR("Cannot open file " + std::string(outfilename));
     }
 
-    sprintf (outstr, "POWERSTATION node %d %s\n", int(idnr) , nodename.c_str()  );
+    sprintf (outstr, "POWERSTATION node %d %s\n", int(idnr) , nodename.c_str() );
     fprintf(fp, "%s", outstr);
     fprintf(fp, "init_Power = %.5f\n", this->init_Power);
     fprintf(fp, "penstock_config = %s\n", shared_penstock ? "SHARED" : "SEPARATE");
     fprintf(fp, "headloss_coef = %.6f\n", this->headlosscoef);
 
     fprintf(fp, "yyyy mm dd hh [m3/s]    [Euro/MWh] ");
+
     for (size_t g = 0; g < generators.size(); ++g) {
         fprintf(fp, " [fr_g%zu]", g);
     }
-    fprintf(fp, " [m3/s] [m3/s] [Euro] [Euro] [m] [m] [MWh] [Euro] [Euro] [GWh/Mm3]\n");
+    fprintf(fp, " [m3/s] [m3/s] [m] [m] [MWh] [GWh/Mm3] [Euro] [Euro] [Euro] [Euro] [Euro] [Euro]\n");
 
     fprintf(fp, "yyyy mm dd hh Up_Inflow Price");
     for (size_t g = 0; g < generators.size(); ++g) {
         fprintf(fp, " Action_g%zu", g);
     }
-    fprintf(fp, " tot_outflow auto_qmin income startstopCost Hnetto Hbrutto Power adjust_cost profit est_eekv\n");
+    fprintf(fp, " tot_outflow auto_qmin Hnetto Hbrutto Power est_eekv income tot_cost startstopCost adjust_cost cost_aggressive_actions profit\n");
 
     for(size_t t = 0; t < this->stps; t++) {
         fprintf(fp, "%d %d %d %d ", S->year[t], S->month[t], S->day[t], S->hour[t]);
@@ -652,9 +733,10 @@ int Powerstation::WriteNodeOutput(GlobalConfig *gc) {
             double act = (generators[g].action.size() > t) ? generators[g].action[t] : -9999.0;
             fprintf(fp, " %.4f", act);
         }
-        fprintf(fp, " %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
-            S->tot_outflow[t], S->auto_qmin_m3s[t], S->income[t], S->cost[t] - S->adjust_cost[t],
-            S->Hnetto[t], S->Hbrutto[t], S->Power[t], S->adjust_cost[t], S->profit[t], S->EstimatedEEKV[t]);
+        fprintf(fp, " %.4f %.4f %.4f %.4f %.4f %.4f ",
+            S->tot_outflow[t], S->auto_qmin_m3s[t], S->Hnetto[t], S->Hbrutto[t], S->Power[t], S->EstimatedEEKV[t]);
+        fprintf(fp, " %.4f %.4f %.4f %.4f %.4f %.4f\n",
+            S->income[t], S->cost[t] , S->startStopCost[t], S->adjust_cost[t], S->cost_aggressive_actions[t], S->profit[t]);
     }
 
     fclose(fp);
@@ -698,23 +780,14 @@ double Powerstation::GetTunnelFLow(size_t t) {
 
     double Q_Mm3 = MACRO_m3s_2_Mm3(flow, S->dt);
 
-
-
     // We shut down production and auto_qmin if the reservoir is dry or water level below tunnel 
     // I think we should give a minor penalty when we run action to aggresively. Just so we dont get the same value in VF. 
     if (Q_Mm3 > up_res_Mm3) {
-        //printf("DEBUG: Aggressive action triggered at timestep %zu for node %d (%s)\n", t, int(idnr), nodename.c_str());
-        //printf("DEBUG: Q_Mm3 = %.6f, up_res_Mm3 = %.6f, flow = %.6f, S->dt = %ld\n", Q_Mm3, up_res_Mm3, flow, S->dt);
-        //printf("DEBUG: Action values: ");
-        //for (size_t g = 0; g < generators.size(); ++g) {
-        //    if (generators[g].action.size() > t) {
-        //        printf("g%zu=%.3f ", g, generators[g].action[t]);
-        //    }
-        //}
-        //printf("\n");
-        aggressive_actions_cost = (Q_Mm3 - up_res_Mm3) * 900000000.0;
-        flow = 0.0;
+        LOG_WARN("DEBUG: Aggressive action triggered at timestep " + std::to_string(t) + " for node " + std::to_string(int(idnr)) + " (" + nodename + ")");
 
+        aggressive_actions_cost = (Q_Mm3 - up_res_Mm3) * HERSS_AGGRESSIVE_ACTIONS_COST;
+        S->cost_aggressive_actions[t] = aggressive_actions_cost;
+        flow = 0.0;
     }
 
     return flow;
@@ -727,10 +800,18 @@ int Powerstation::WriteStateFile(FILE *fp) {
 //////////////////////////////////////////////////////////////////////////////////
 double Powerstation::CalcAdjustmenCosts(void) {
 
+    // BVM, June 2026. 
+    // We are using multi-temporal resolution, 
+    // At daily and weekly resolutions, this method doesnt make sense.
+    // Should be used when we have sub-daily tempral resolution 
+
     double prev_power = init_Power;
     double diff;
     int nr_changes_pr_day = 0;
     double sum_cost = 0.0;
+
+    // cout << " this->max_adjustment_cost = " << this->max_adjustment_cost << "\n";
+
     for(size_t t = 0; t < S->stps; t++) {
         diff = abs(prev_power - S->Power[t]);
 

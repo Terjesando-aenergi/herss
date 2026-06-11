@@ -70,11 +70,15 @@ Herss::Herss(GlobalConfig *gc){
 }
 ///////////////////////////////////////////////////////////
 Herss::~Herss(){
+
     delete rs;
+
+
     for(size_t s=0; s < nr_nodes; s++) {
-        delete scen[s];
+         delete scen[s];
     }
     delete [] scen;
+
 
     this->gc = NULL;
 }
@@ -174,7 +178,6 @@ int Herss::prepaireSimulation(Dataset *data) {
     }
 
 
-
     for(size_t n = 0; n < gc->nr_nodes; n++) {
         rs->nodes[n]->ReadNodeData(gc->topologyfile);
         rs->nodes[n]->S = this->scen[n];
@@ -197,6 +200,7 @@ int Herss::prepaireSimulation(Dataset *data) {
         }
     }
 
+
     // We need to load statefile
     for(size_t n = 0; n < gc->nr_nodes; n++) {
         rs->nodes[n]->ReadStateFile(gc->start_statefile);
@@ -208,7 +212,6 @@ int Herss::prepaireSimulation(Dataset *data) {
         rs->nodes[n]->initArrayCurves();
     }
 
-
     for(size_t r = 0; r < gc->nr_reservoirs; r++) {
         rs->reservoirs[r].InitReservoir();
         size_t node_idnr = rs->reservoirs[r].idnr;
@@ -216,19 +219,21 @@ int Herss::prepaireSimulation(Dataset *data) {
     }
 
     SetPointers();
-    
-    // BVM June 2026. 
-    // Make sure actions for RESERVOIRS are set correctly 
+
+    // BVM June 2026.
+    // Make sure actions for RESERVOIRS are set correctly
     if(!data->action_colnames.empty()) {
+
         for (size_t n = 0; n < gc->nr_nodes; ++n) {
             Node* node = rs->nodes[n];
-            if (node->nodetype == NodeType::RESERVOIR) {
+
+            if(node->nodetype == NodeType::RESERVOIR) {
+
                 Reservoir* res = static_cast<Reservoir*>(node);
 
                 // We only do this if outlet_hatch is in use, 
                 // otherwise the action vector for reservoirs is not used and can be left as is.
                 if(res->outlet_hatch_in_use) {
-                
                     // Find the column index in Dataset
                     int col_idx = -1;
                     for (size_t c = 0; c < data->action_colnames.size(); ++c) {
@@ -244,6 +249,12 @@ int Herss::prepaireSimulation(Dataset *data) {
 
                     for (size_t t = 0; t < data->stps; ++t) {
                         res->S->action[t][res->idnr] = data->action[t][col_idx];
+                    }
+                } else {
+                    // Reservoir has no hatch — clear the action slot that was
+                    // incorrectly populated by the generic positional load loop above.
+                    for (size_t t = 0; t < data->stps; ++t) {
+                        res->S->action[t][res->idnr] = 0.0;
                     }
                 }
             }
@@ -275,12 +286,13 @@ int Herss::prepaireSimulation(Dataset *data) {
                 
                     // Fill the generators action vector for all timesteps
                     ps->generators[g].action.clear();
-                for (size_t t = 0; t < data->stps; ++t) {
-                    ps->generators[g].action.push_back(data->action[t][col_idx]);
+                    for (size_t t = 0; t < data->stps; ++t) {
+                        ps->generators[g].action.push_back(data->action[t][col_idx]);
+                    }
                 }
             }
         }
-    }} else {
+    } else {
         // If no action file data, initialize generator action vectors with zeros 
         for (size_t n = 0; n < gc->nr_nodes; ++n) {
             Node* node = rs->nodes[n];
@@ -294,13 +306,16 @@ int Herss::prepaireSimulation(Dataset *data) {
         LOG_ERR("WARNING: No action column names found in dataset, generator actions initialized to zero");
     }
 
+
+
     return 0;
 }
 /////////////////////////////////////////////////////////////////////
 void Herss::SetPointers() {
+
     // Set pointers for the different outlets (RESERVOIR) and downstream nodes (CHANNEL/POWERSTATION)
     for(size_t n = 0; n < gc->nr_nodes; n++) {
-        
+
         if(rs->nodes[n]->downstream_node_in_use) {
             rs->nodes[n]->ptr_downstream_node = rs->nodes[rs->nodes[n]->downstream_idnr];
         }
@@ -310,7 +325,7 @@ void Herss::SetPointers() {
         }
 
         if( rs->nodes[n]->outlet_tunnel_in_use) {
-            if(rs->nodes[n]->downstream_idnr_tunnel > int(this->nr_nodes-1)  ) {
+            if(rs->nodes[n]->downstream_idnr_tunnel > (this->nr_nodes-1)) {
                 LOG_WARN("ERROR:  There is something wrong with node idnrs");
                 LOG_WARN("rs->nodes[n]->downstream_idnr_tunnel = " + std::to_string(rs->nodes[n]->downstream_idnr_tunnel));
                 LOG_WARN("nr_nodes = " + std::to_string(this->nr_nodes));
@@ -320,7 +335,9 @@ void Herss::SetPointers() {
         }
 
         if( rs->nodes[n]->outlet_overflow_in_use) {
-            if(  rs->nodes[n]->downstream_idnr_overflow > int(this->nr_nodes-1)  ) {
+            // We have either a spillway or an overflow curve, 
+            // but both have the same downstream node idnr, so we only need to check this once.
+            if(  rs->nodes[n]->downstream_idnr_overflow > (this->nr_nodes-1)  ) {
                 LOG_WARN("ERROR:  There is something wrong with node idnrs");
                 LOG_WARN("rs->nodes[n]->downstream_idnr_overflow = " + std::to_string(rs->nodes[n]->downstream_idnr_overflow));
                 LOG_WARN("nr_nodes = " + std::to_string(this->nr_nodes));

@@ -1,5 +1,8 @@
 RESERVOIR node 0 YVATN
-reservoir_init_fr= 0.80000
+reservoir_init_fr= 0.80000  masl=561.646
+Filling at HRW [Mm3] = 17.60000
+Filling at LRW [Mm3] = 5.00000
+Active reservoir capacity [Mm3] = 12.60000
 yyyy mm dd hh [m3/s] [Euro/MWh] [fr] [m3/s] [Mm3] [masl] [fr] [Euro]         [m3/s]     [m3/s]    [m3/s]   [m3/s]    [m3/s] 
 yyyy mm dd hh Inflow Price Action Up_Inflow Res_Mm3 Res_masl Res_fr lrw_cost tunnelflow hatchflow overflow auto_qmin tot_outflow
 2026 5 7 0 0.5000 24.8800 1.0000 0.0000 14.7218 561.7157 0.7716 0.0000 0.0000 100.0000 0.0000 0.0000 100.0000 

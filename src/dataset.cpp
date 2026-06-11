@@ -173,6 +173,7 @@ void Dataset::readActionsFile() {
     size_t active_nodes = 0;
 
     getline(myfile, line);
+
     if( line.length()  > 0 && ( line[0] != '#') ) {
 
         keyword = line_obj.extractNextElementFromLine(&line);
@@ -224,6 +225,8 @@ void Dataset::readActionsFile() {
     }
     myfile.close();
     this->action_colnames = colnames;
+
+
 }
 /////////////////////////////////////////////////////////////////////////////////////////
 void Dataset::readInflowFile() {
