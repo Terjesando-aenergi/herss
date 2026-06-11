@@ -22,5 +22,8 @@ obj/
 *.fdb_latexmk
 
 
+# Private data folder for work
+#data/*
+
 
 

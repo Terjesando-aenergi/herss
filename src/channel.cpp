@@ -180,16 +180,21 @@ int Channel::ReadNodeData(string filename) {
             tmp_idnr = atoi(token.c_str() );
 
             if(tmp_idnr == idnr) {
+
                 str_name = line_obj.extractNextElementFromLine(&line);
                 str_downstream_node = line_obj.extractNextElementFromLine(&line);
 
-                this->downstream_idnr = atoi(str_downstream_node.c_str() );
-                if(this->downstream_idnr >= 0) {
+                // Here I have the problem using size_t. It doesnt understand negative numbers. BVM June 2026. 
+                int tmp_down_idnr = atoi(str_downstream_node.c_str() );
+
+                if(tmp_down_idnr >= 0) {
                     downstream_node_in_use = true;
+                    this->downstream_idnr = size_t(tmp_down_idnr);
                 } else {
                     downstream_node_in_use = false;
                 }
-                
+
+
                 // Now we are inside the correct node, we can extract the variables.
                 // We continue to loop over the lines until we find the next node, then we stop.
                 inside_node = true;
@@ -278,7 +283,6 @@ int Channel::ReadNodeData(string filename) {
                         }
                     }
 
-
                     if(!found_keyword) {
                         LOG_ERR("ERROR: Invalid keyword in topology file " + filename + " see line: " + tmpline2);
                     }
@@ -287,6 +291,7 @@ int Channel::ReadNodeData(string filename) {
             }
         }
     }
+
 
     return 0;
 }

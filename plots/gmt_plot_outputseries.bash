@@ -38,7 +38,7 @@ gmt begin "${OUTBASE}" png,pdf
         TIME_EPOCH 1970-01-01T00:00:00 \
         TIME_UNIT s
 
-    awk 'NR > 4 {
+    awk 'NR > 7 {
         yyyy = $1; 
         mm   = $2;
         dd   = $3;
@@ -68,10 +68,10 @@ gmt begin "${OUTBASE}" png,pdf
         mm   = $2;
         dd   = $3;
         hh   = $4;
-        printf "%s-%s-%sT%s:00 %s\n", yyyy, mm, dd, hh, $14
+        printf "%s-%s-%sT%s:00 %s\n", yyyy, mm, dd, hh, $12
     }' "${NODE1}" | \
     gmt plot \
-        -R2026-05-07T00:00/2026-05-08T23:00/-0.1/2.1 \
+        -R2026-05-07T00:00/2026-05-08T23:00/-0.1/3.2 \
         -JX16c/4c -Y-4.4c \
         -f0T \
         -W1.0p,red \

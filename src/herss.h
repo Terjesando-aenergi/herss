@@ -46,8 +46,8 @@ SOFTWARE.
 using namespace std;
 
 // BVM May 2026, we start using the version convention MAJOR.MINOR.PATCH
-const string VERSION = "3.1.02";
-const string VERSION_DATE = "20260605";
+const string VERSION = "3.1.03";
+const string VERSION_DATE = "20260611";
 
 // Maximum number of nodes allowed. // to save coding
 #define MAX_NR_NODES 30
@@ -81,6 +81,7 @@ const string NUMERIC = "0123456789.-";
 const std::string DEFAULT_STRING_INIT = "ERROR_STR_NOT_INIT";
 
 #define HERSS_DEBUG_ALL false
+
 #define MAX_NUMBER_OF_QMIN_PERIODS 5
 
 // Turn on and off warnings related to check of waterbalance. 
@@ -92,6 +93,11 @@ const std::string DEFAULT_STRING_INIT = "ERROR_STR_NOT_INIT";
 // Maximum nr of generators in a powerstation
 #define MAX_NR_GENERATORS 6
 #define MAX_NR_CASCADED_RESERVOIRS 10
+
+#define N_UNIFORM_EFF_CURVE_POINTS 11
+
+#define HERSS_AGGRESSIVE_ACTIONS_COST 1000
+
 
 /////////////////////////////////////////////////////////////////
 #define MACRO_m3s_2_Mm3(q, dt) q*dt/1000000.0
@@ -432,7 +438,13 @@ public:
     double *startStopCost;
     double *cost_lrw;
     double *cost_fake_lrw;
-    double *adjust_cost;
+
+    
+    // Use this to penalise number of Power adjustments pr day . Like a soft start-stop cost. 
+    double *adjust_cost;  
+
+    // If we try to empty the reservoir. We override the actions and give penalty cost for too agressive actions.  
+    double *cost_aggressive_actions;
 
     double *Hbrutto;  // Hydraulic head brutto
     double *Hnetto;  // Hydraulic head netto
@@ -543,23 +555,26 @@ class Node {
     double auto_qmin;
     double start_of_stp_masl;
     double end_of_stp_masl;
-    
+
     bool downstream_node_in_use;
+
     bool outlet_hatch_in_use;
     bool outlet_tunnel_in_use;
     bool outlet_overflow_in_use;
     bool outlet_auto_qmin_in_use;
 
-    int downstream_idnr; // Used to keep track of remaining water volumes. 
-    int downstream_idnr_tunnel;
-    int downstream_idnr_hatch;
-    int downstream_idnr_overflow;
-    int downstream_idnr_auto_qmin;
+    size_t downstream_idnr; // Used to keep track of remaining water volumes.
+    size_t downstream_idnr_tunnel;
+    size_t downstream_idnr_hatch;
+    size_t downstream_idnr_overflow;  // Same idnr for Spillway and overflow_curve
+    size_t downstream_idnr_auto_qmin;
+   
+    Node *ptr_downstream_node;  // This one is essentially a helper pointer.
+    // We set this one to one of the outlets that are used.
 
-    Node *ptr_downstream_node;
     Node *ptr_downstream_node_tunnel;
     Node *ptr_downstream_node_hatch;
-    Node *ptr_downstream_node_overflow;
+    Node *ptr_downstream_node_overflow;  // Same pointer for spillway and overflow curve, since we can only use one of them in each reservoir.
     Node *ptr_downstream_node_auto_qmin;
 
     virtual int ReadNodeData(string filename);
@@ -635,6 +650,8 @@ class Reservoir: public Node {
     double res_curve_Mm3[MAX_NR_POINTS_CURVE];
     size_t nr_points_res_curve;
 
+
+
     bool use_overflow_curve; // If true, we use the overflow curve for calculating the overflow.
     double ovefl_curve_masl[MAX_NR_POINTS_CURVE];
     double ovefl_curve_m3s[MAX_NR_POINTS_CURVE];
@@ -651,7 +668,8 @@ class Reservoir: public Node {
     double spillway_C;
     double spillway_L;
     double spillway_level_masl;  // The level of the spillway in masl
-    bool use_spillway; // If true, we use the spillway for calculating the overflow.
+    bool use_spillway; 
+
 
     ArrayCurve ac_res_masl_2_Mm3;
     ArrayCurve ac_res_Mm3_2_masl;
@@ -698,6 +716,10 @@ struct Generator {
         std::vector<double> action;             // Actions for this generator
         double headlosscoef;                    // Head loss coefficient for this generator/penstock
         double max_discharge;                   // Maximum discharge for this generator
+
+        double uniform_normalized_curve[N_UNIFORM_EFF_CURVE_POINTS];
+        bool use_uniform_normalized_curve;
+
     };
 
 class Powerstation: public Node {
@@ -744,7 +766,6 @@ class Powerstation: public Node {
     //--------------------------------------------------------------------------------------
 
 
-
     double static_gen_efficiency;
     double headlosscoef;
     double powstat_masl;
@@ -773,6 +794,10 @@ class Powerstation: public Node {
     int WriteStateFile(FILE *fp);
     double CalcAdjustmenCosts(void); // Only for Powerstation 
     void ValidatePowerstationSettings();  // We check if the settings for the powerstation are valid. For example, that the number of generators is not higher than the maximum allowed, and that the headloss coefficient is not negative.
+
+    double calcEfficiency(size_t gen_idx, double q_m3s);  // Calculate the efficiency for a specific generator and discharge.
+
+
 
 };
 /////////////////////////////////////////////////////////////////////////////////////////

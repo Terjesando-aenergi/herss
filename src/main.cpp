@@ -65,7 +65,6 @@ int main(int argc, char *argv[]) {
     // I turned it off in logger.h. Too much flushing of the screen.
     
     LOG_INFO("HERSS started at: " + xtime_start_str);
-    
     LOG_MSG("HERSS started at: " + xtime_start_str);
     LOG_MSG("Starting HERSS with global config file: " + string(argv[1]) );
     LOG_MSG("VERSION: " + VERSION );
@@ -83,6 +82,9 @@ int main(int argc, char *argv[]) {
         gc->printGlobalInfo();
     }
 
+    // gc->printGlobalInfo();
+
+
     Dataset *data;
     data = new Dataset(gc);
     data->readAllData(); 
@@ -92,27 +94,20 @@ int main(int argc, char *argv[]) {
 
     herss->prepaireSimulation(data);
 
+
     // Check that basic variables are initialized and sett within aceptable limits. 
     herss->rs->DiagnoseRiversystemConfiguration();
 
     LOG_MSG("Initialisation looks good. Starting simulation..... ");
-    
     herss->Simulate();
-    
-
     herss->CheckWaterBalance();
-
     herss->GlobalWaterBalance();
-    herss->CalcAdjustmenCosts();
     
+    herss->CalcAdjustmenCosts();
+
+    herss->rs->CalcVF(data->restprice);
+
     if(gc->printeconomicinfo) {
-        printf("ValueFunction                = %.5f\n",  herss->rs->CalcVF(data->restprice));
-        printf("valuefunction_Euro           = %.3f\n",  herss->rs->valuefunction_Euro);
-        printf("tot_profit_Euro              = %.3f\n",  herss->rs->tot_profit_Euro);
-        printf("tot_remaining_Euro           = %.3f\n",  herss->rs->tot_remaining_Euro);
-        printf("tot_remaining_MWh            = %.4f\n",  herss->rs->tot_remaining_MWh);
-        printf("tot_remaining_Mm3            = %.4f\n",  herss->rs->tot_remaining_Mm3);
-        printf("tot_remaining_active_Mm3     = %.4f\n",  herss->rs->tot_active_remaining_Mm3);  
         herss->rs->PrintEconomicInfo(herss);
     }
 
@@ -124,9 +119,12 @@ int main(int argc, char *argv[]) {
     herss->rs->WriteRiverSystemData(data->restprice);
     herss->rs->WriteReservoirData();
     herss->WriteStateFile();
+
+
     if(gc->write_nodefiles) {
         herss->WriteNodeOutput();
     }  
+
 
     delete herss;
     delete data;
