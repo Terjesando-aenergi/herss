@@ -3,7 +3,7 @@ Project:      The Hydraulic Economic River System Simulator (HERSS)
 Filename:     README.md
 
 Startdate:	  April, 2024
-Last update:  May, 2026
+Last update:  June 10, 2026
 
 Developer:    Bernt Viggo Matheussen (Bernt.Viggo.Matheussen@aenergi.no)
 
