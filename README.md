@@ -6,6 +6,7 @@ Startdate:	    April, 2024
 Last update:    June 10, 2026
 
 Lead developer: Bernt Viggo Matheussen (Bernt.Viggo.Matheussen@aenergi.no)
+
 Contributers:   Ove Arstad, Terje Sandø, Kim Ly, Daniel Lindestad, Jonas Land, Daniel Grønn
 
 Organization: Å Energi, www.ae.no
