@@ -85,6 +85,26 @@ double ArrayCurve::initializeArrays() {
         xupper[t] = x_points[idx_points+1];
         yupper[t] = y_points[idx_points+1];
     }
+
+
+    // We need to assume that there is a little difference between xmin, and xmax.
+    double xdiff = abs(xmax - xmin);
+    if(xdiff < 0.0001) {
+        LOG_WARN("ERROR: xdiff is too small in ArrayCurve::x2y, this can lead to numerical instability. Check your curve definition. xdiff = " + std::to_string(xdiff));
+        LOG_WARN("xmin = " + std::to_string(xmin) + ", xmax = " + std::to_string(xmax));
+        LOG_ERR("Node idnr = " + std::to_string(int(current_node_idnr)) + "   nodename = " + current_node_name );
+    }
+
+
+    // We need to assume that there is a little difference between xmin, and xmax.
+    double ydiff = abs(ymax - ymin);
+    if(ydiff < 0.0001) {
+        LOG_WARN("ERROR: ydiff is too small in ArrayCurve::x2y, this can lead to numerical instability. Check your curve definition. ydiff = " + std::to_string(ydiff));
+        LOG_ERR("Node idnr = " + std::to_string(int(current_node_idnr)) + "   nodename = " + current_node_name );
+    }
+
+
+
     return 0.0;
 }
 ///////////////////////////////////////////////////////////////////////////
@@ -94,7 +114,39 @@ double ArrayCurve::initializeArrays() {
 // The current method have a numerical problem with it.
 // The quick solution is to make the curves go to a tiny fraction above max flow.
 // We have to look at this later
+//
+// Terje made a fix on this. See below. 
+
+
 double ArrayCurve::x2y(double x) {
+
+
+    //cout << "Input x = " << x << "\n";
+    //cout << "xmin = " << xmin << ", xmax = " << xmax << "\n";
+
+    //printf("x_points and y_points:\n");
+
+    //for(int i = 0; i < nr_pts; i++) {
+    //    printf("  [%d] x_points[%d]=%.5f  y_points[%d]=%.5f\n", i, i, x_points[i], i, y_points[i]);
+    //}
+
+
+    // We need to assume that there is a little difference between xmin, and xmax.
+    double xdiff = abs(xmax - xmin);
+    if(xdiff < 0.0001) {
+        LOG_WARN("ERROR: xdiff is too small in ArrayCurve::x2y, this can lead to numerical instability. Check your curve definition. xdiff = " + std::to_string(xdiff));
+        LOG_WARN("xmin = " + std::to_string(xmin) + ", xmax = " + std::to_string(xmax));
+        LOG_ERR("Node idnr = " + std::to_string(int(current_node_idnr)) + "   nodename = " + current_node_name );
+    }
+
+
+    // We need to assume that there is a little difference between xmin, and xmax.
+    double ydiff = abs(ymax - ymin);
+    if(ydiff < 0.0001) {
+        LOG_WARN("ERROR: ydiff is too small in ArrayCurve::x2y, this can lead to numerical instability. Check your curve definition. ydiff = " + std::to_string(ydiff));
+        LOG_ERR("Node idnr = " + std::to_string(int(current_node_idnr)) + "   nodename = " + current_node_name );
+    }
+
 
     double xt = x + 0.0;
 
@@ -106,6 +158,10 @@ double ArrayCurve::x2y(double x) {
         printf("xt=%.8f\n", xt );
         printf("xmin = %.4f\n", xmin );
         printf("xmax = %.4f\n", xmax );
+        printf("ymin = %.4f\n", ymin );
+        printf("ymax = %.4f\n", ymax );
+
+        printf("file: %s  linenr: %d  function: %s \n", __FILE__ , __LINE__, __FUNCTION__);
         printf("timestep = %zu\n", current_timestep );
         printf("node idnr = %zu, nodename = %s\n", current_node_idnr, current_node_name.c_str() );
         for(int i = 0; i < nr_pts; i++) {
@@ -114,29 +170,32 @@ double ArrayCurve::x2y(double x) {
         return -1.0 * VERY_LARGE_NUMBER;
     }
 
-       // Change by Terje 2024-06-11. The original method can give an index that is out of bounds when xt is very close to xmax, due to rounding. 
+    // Old code, BVM 
+    //int idx;
+    //idx = int(  0.5 +  ( xt - x_points[0]) / (x_points[nr_pts-1] - x_points[0]) * double(POINTS_IN_ARRAY)) ;
+
+    // Change by Terje 2024-06-11. The original method can give an index that is out of bounds when xt is very close to xmax, due to rounding. 
     // The new method calculates the fraction of the way through the x range, and then scales that to the number of points in the array. This should give a more robust index calculation, even when xt is near xmax. 
     // The new method also includes checks to ensure that the index is within bounds, and that the fraction is between 0 and 1. 
     // If xt is outside the range of x_points, it will log a warning and return a large negative number to indicate an error.
     double frac = (xt - x_points[0]) / (x_points[nr_pts-1] - x_points[0]);
-
     if (frac < 0.0) frac = 0.0;
     if (frac > 1.0) frac = 1.0;
-
     int idx = int(frac * double(POINTS_IN_ARRAY));
-
     if (idx >= POINTS_IN_ARRAY) idx = POINTS_IN_ARRAY - 1;
     if (idx < 0) idx = 0;
 
     if(xt < x_points[0] || xt > x_points[nr_pts-1]) {
-        
         LOG_WARN("ERROR: x value is out of bounds for interpolation");
         printf("HOUSTON - we have a problem!\n");
         printf("x=%.3f\n", xt);
         printf("idx = %d\n", idx);
         printf("file: %s  linenr: %d  function: %s \n", __FILE__ , __LINE__, __FUNCTION__);
+        std::string debug_info = std::string(__FILE__) + " linenr: " + std::to_string(__LINE__) + " function: " + std::string(__FUNCTION__);
+        LOG_WARN(debug_info);
         return -1.0 * VERY_LARGE_NUMBER;
     }
+
 
     double y;
     double slope;
@@ -145,6 +204,19 @@ double ArrayCurve::x2y(double x) {
 
     // De-Normalize
     y = y * (ymax-ymin) + ymin;
+
+    if(y < 0.0) {
+	    //double x_points[POINTS_IN_ARRAY];  // We copy over the data from the OVERFLOW CURVE, etc.
+	    //double y_points[POINTS_IN_ARRAY];
+	    //int nr_pts;  // Number of points used in the array
+        printf("x_points and y_points:\n");
+        for(int i = 0; i < nr_pts; i++) {
+            printf("  [%d] x_points[%d]=%.5f  y_points[%d]=%.5f\n", i, i, x_points[i], i, y_points[i]);
+        }
+    }
+
+
+
     return y;
 }
 ///////////////////////////////////////////////////////////////////////////

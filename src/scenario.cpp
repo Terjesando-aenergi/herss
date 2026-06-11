@@ -31,8 +31,9 @@ SOFTWARE.
 
 Scenario::Scenario(){}
 
-Scenario::Scenario(size_t stps, size_t dt, size_t idnr){
 
+
+Scenario::Scenario(size_t stps, size_t dt, size_t idnr){
     this->stps = stps;
     this->dt   = dt;
     this->idnr = idnr;
@@ -91,6 +92,9 @@ Scenario::Scenario(size_t stps, size_t dt, size_t idnr){
         channel_storage_Mm3 = new double[stps];
         adjust_cost         = new double[stps];
 
+        cost_aggressive_actions = new double[stps];
+
+
         year            = new int[stps];
         month           = new int[stps];
         day             = new int[stps];
@@ -135,6 +139,7 @@ Scenario::Scenario(size_t stps, size_t dt, size_t idnr){
         hour[t]            = NOT_INIT;
         qmin_flag[t]       = NOT_INIT;
         adjust_cost[t]     = 0.0;
+        cost_aggressive_actions[t] = 0.0;
 
         EstimatedEEKV[t]   = NOT_INIT;
 
@@ -152,6 +157,10 @@ Scenario::~Scenario(){
     for (size_t t = 0; t < stps; ++t) {
         delete[] action[t];
     }
+    delete [] action;
+    delete [] EstimatedEEKV;
+
+
     delete [] q_action;
     delete [] inflow;
     delete [] tot_outflow;
@@ -184,6 +193,7 @@ Scenario::~Scenario(){
     delete [] auto_qmin_m3s;
     delete [] channel_storage_Mm3;
     delete [] adjust_cost;
+    delete [] cost_aggressive_actions;  
 
 }
 ///////////////////////////////////////////////////////////////////////////////

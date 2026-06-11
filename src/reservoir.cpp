@@ -48,19 +48,34 @@ Reservoir::Reservoir(){
     res_fr                         = NOT_INIT;
     nr_points_res_curve            = 0;
     nr_points_ovefl_curve          = 0;
+
+    downstream_node_in_use         = false;
+
     outlet_hatch_in_use            = false;
     outlet_tunnel_in_use           = false;
+    outlet_overflow_in_use         = false;
+    
+    outlet_auto_qmin_in_use        = false;
+
+    use_reservoir_geometry        = false;
+    use_reservoir_curve           = false;
+
+    //-----------------------------------------------
+    // OVERFLOW 
+    use_overflow_curve            = false;
+    use_spillway                  = false;
+    //-----------------------------------------------
+
+
 
     minQ_hatch                     = NOT_INIT;
     maxQ_hatch                     = NOT_INIT;
     hatch_masl                     = NOT_INIT;
-    
     res_penalty                    = -1.0*NOT_INIT;
     floodlevel_cost                = -1.0*NOT_INIT;
 
     fast_overflow = false; 
-
-    use_reservoir_geometry = false;
+    
     width_m     = -1.0*NOT_INIT;
     length_m    = -1.0*NOT_INIT;
     theta       = -1.0*NOT_INIT; // angle of the sides of the reservoir, in degrees.
@@ -68,19 +83,23 @@ Reservoir::Reservoir(){
     slope_term  = -1.0*NOT_INIT; // tan((90.0 - theta) * PI / 180.0);
     geo_denom   = -1.0*NOT_INIT; // length_m * (slope_term + width_m);
 
-    use_reservoir_curve = false;
-    use_spillway           = false;
-    use_overflow_curve     = false;
+    ptr_downstream_node            = NULL;
+    ptr_downstream_node_tunnel     = NULL;
+    ptr_downstream_node_hatch      = NULL;
+    ptr_downstream_node_overflow   = NULL; 
+    ptr_downstream_node_auto_qmin  = NULL;
+
+
+
+
 
 }
-
+//----------------------------------------------------------------------------------
 Reservoir::~Reservoir(){}
-
-
+//----------------------------------------------------------------------------------
 int Reservoir::initArrayCurves(void) {
 
     if(use_reservoir_curve) {
-
         // RESERVOIR CURVE    X=MASL  ,  Y = Mm3
         ac_res_masl_2_Mm3.nr_pts = this->nr_points_res_curve;
         for (int p = 0; p < ac_res_masl_2_Mm3.nr_pts; p++){
@@ -96,28 +115,36 @@ int Reservoir::initArrayCurves(void) {
             ac_res_Mm3_2_masl.y_points[p] = res_curve_masl[p];
         }
         ac_res_Mm3_2_masl.initializeArrays();
+
+    }
+    
+    // We need to check wether we use spillway or overflow curve for the overflow calculation. We cannot use both.
+    if(this->use_overflow_curve && this->use_spillway) {
+        LOG_ERR("ERROR: Cannot use both overflow curve and reservoir geometry for overflow calculation. Node idnr = "
+             + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+    }
+    
+    
+    if(use_overflow_curve) {    
+        //--------------------------------------------------------------------
+        // Specify OVERFLOW_CURVE and number of points. If not used specify with "-9999"
+        ac_ovefl_masl_2_m3s.nr_pts = this->nr_points_ovefl_curve;
+        for (int p = 0; p < ac_ovefl_masl_2_m3s.nr_pts; p++){
+            ac_ovefl_masl_2_m3s.x_points[p] = ovefl_curve_masl[p];
+            ac_ovefl_masl_2_m3s.y_points[p] = ovefl_curve_m3s[p];
+        }
+        ac_ovefl_masl_2_m3s.initializeArrays();
+
+        //ArrayCurve ac_ovefl_m3s_2_masl;
+        ac_ovefl_m3s_2_masl.nr_pts = this->nr_points_ovefl_curve;
+        for (int p = 0; p < ac_ovefl_m3s_2_masl.nr_pts; p++){
+            ac_ovefl_m3s_2_masl.x_points[p] = ovefl_curve_m3s[p];
+            ac_ovefl_m3s_2_masl.y_points[p] = ovefl_curve_masl[p];
+        }
+        ac_ovefl_m3s_2_masl.initializeArrays();
     }
 
 
-
-    //--------------------------------------------------------------------
-    // Specify OVERFLOW_CURVE and number of points. If not used specify with "-9999"
-    ac_ovefl_masl_2_m3s.nr_pts = this->nr_points_ovefl_curve;
-    for (int p = 0; p < ac_ovefl_masl_2_m3s.nr_pts; p++){
-        ac_ovefl_masl_2_m3s.x_points[p] = ovefl_curve_masl[p];
-        ac_ovefl_masl_2_m3s.y_points[p] = ovefl_curve_m3s[p];
-    }
-    ac_ovefl_masl_2_m3s.initializeArrays();
-
-
-
-    //ArrayCurve ac_ovefl_m3s_2_masl;
-    ac_ovefl_m3s_2_masl.nr_pts = this->nr_points_ovefl_curve;
-    for (int p = 0; p < ac_ovefl_m3s_2_masl.nr_pts; p++){
-        ac_ovefl_m3s_2_masl.x_points[p] = ovefl_curve_m3s[p];
-        ac_ovefl_m3s_2_masl.y_points[p] = ovefl_curve_masl[p];
-    }
-    ac_ovefl_m3s_2_masl.initializeArrays();
 
     return 0;
 }
@@ -133,7 +160,14 @@ double Reservoir::CalcOverflow() {
     overflow_m3s = 0.0;
     overflow_Mm3 = 0.0;
 
-    masl_start_overflow = this->ovefl_curve_masl[0];
+    
+    
+    if(this->use_overflow_curve) {
+        masl_start_overflow = this->ovefl_curve_masl[0];  
+    } else if(this->use_spillway) {
+        masl_start_overflow = this->spillway_level_masl;
+    }
+
 
     // CHANGE BY OVE: Fast overflow calculation
     if (fast_overflow) {
@@ -143,69 +177,117 @@ double Reservoir::CalcOverflow() {
         }
         return overflow_Mm3;
     } else {
-        // The bottom point in the overflow curve is usually the same as HRW, but not always.
-        if(this->res_masl > masl_start_overflow) {
-            overflow_m3s = ac_ovefl_masl_2_m3s.x2y(this->res_masl);
-            overflow_Mm3 = MACRO_m3s_2_Mm3(overflow_m3s,S->dt);
 
-            // We cannot allow the overflow to drain more than down to the top of the dam ( for now we assume HRW).
-            // This has to do with numerical stability using large timesteps.
-            // When the reservoir level is close to one of the points defining the reservoir- or overflow curve, we will get wrong answer
-            // when the reservoirlevel drops from one point to below another one.
-            // Maybe we need to use the old way of looping over all the points defining the reservoir and overflow curves.
-            // WORK IN PROGRESS
-            current_filling  = this->res_Mm3; 
-
-            max_overflow = current_filling - filling_at_hrw_Mm3;
-
-            if(overflow_Mm3 > max_overflow){
-                overflow_Mm3 = max_overflow;
-            }
-
-            if(overflow_Mm3 < 0.0) {
-                LOG_WARN("Negative overflow is not allowed \n");
-                //double res_curve_masl[MAX_NR_POINTS_CURVE];
-                //double res_curve_Mm3[MAX_NR_POINTS_CURVE];
-                //size_t nr_points_res_curve;
-
-                //double ovefl_curve_masl[MAX_NR_POINTS_CURVE];
-                //double ovefl_curve_m3s[MAX_NR_POINTS_CURVE];
-                //size_t nr_points_ovefl_curve;
-
-                LOG_WARN("current_filling  = " + std::to_string(this->res_Mm3)); 
-                LOG_WARN("filling_at_hrw_Mm3 = " + std::to_string(filling_at_hrw_Mm3));
-                LOG_WARN("masl_start_overflow= " + std::to_string(masl_start_overflow));
-                LOG_WARN("overflow_Mm3 = " + std::to_string(overflow_Mm3));
-                LOG_WARN("res_masl= " + std::to_string(this->res_masl));
-                LOG_WARN("masl_start_overflow = " + std::to_string(masl_start_overflow));
-                LOG_ERR("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
-                return -9;
-            }
+        // We have two options for overflow calculations. 
+        // Overflow curve or spillway. 
+        if(this->use_overflow_curve && this->use_spillway) {
+            LOG_ERR("ERROR: Cannot use both overflow curve and reservoir geometry for overflow calculation. Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
         }
+
+
+        if(this->use_overflow_curve) {
+            // The bottom point in the overflow curve is usually the same as HRW, but not always.
+            if(this->res_masl > masl_start_overflow) {
+
+                // Check if res_masl is above the maximum in the reservoir curve
+                double masl_max_overflow = this->ovefl_curve_masl[this->nr_points_ovefl_curve - 1];
+                if(this->res_masl > masl_max_overflow) {
+                    LOG_WARN("res_masl (" + std::to_string(this->res_masl) + ") is above maximum overflow curve level (" + std::to_string(masl_max_overflow) + ")");
+                    LOG_ERR("Please check your overflow curve for node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+                }
+
+                overflow_m3s = ac_ovefl_masl_2_m3s.x2y(this->res_masl);
+                overflow_Mm3 = MACRO_m3s_2_Mm3(overflow_m3s,S->dt);
+
+                // We cannot allow the overflow to drain more than down to the top of the dam ( for now we assume HRW).
+                // This has to do with numerical stability using large timesteps.
+                // When the reservoir level is close to one of the points defining the reservoir- or overflow curve, we will get wrong answer
+                // when the reservoirlevel drops from one point to below another one.
+                // Maybe we need to use the old way of looping over all the points defining the reservoir and overflow curves.
+                // WORK IN PROGRESS
+                current_filling  = this->res_Mm3;
+                max_overflow = current_filling - filling_at_hrw_Mm3;
+
+                if(overflow_Mm3 > max_overflow){
+                    overflow_Mm3 = max_overflow;
+                }
+
+
+                if(overflow_Mm3 < 0.0) {
+                    LOG_WARN("Negative overflow is not allowed \n");
+                    LOG_WARN("current_filling  = " + std::to_string(this->res_Mm3)); 
+                    LOG_WARN("filling_at_hrw_Mm3 = " + std::to_string(filling_at_hrw_Mm3));
+                    LOG_WARN("masl_start_overflow= " + std::to_string(masl_start_overflow));
+                    LOG_WARN("overflow_Mm3 = " + std::to_string(overflow_Mm3));
+                    LOG_WARN("res_masl= " + std::to_string(this->res_masl));
+                    LOG_WARN("masl_start_overflow = " + std::to_string(masl_start_overflow));
+
+                    std::string debug_info = std::string(__FILE__) + " linenr: " + std::to_string(__LINE__) + " function: " + std::string(__FUNCTION__);
+                    // printf("file: %s  linenr: %d  function: %s \n", __FILE__ , __LINE__, __FUNCTION__);
+                    LOG_WARN(debug_info);
+
+                    LOG_ERR("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+                    return -9;
+                }
+
+            }
+        } else if(this->use_spillway) {
+
+            if(this->res_masl > spillway_level_masl) {
+
+                double head_m = this->res_masl - spillway_level_masl;
+                overflow_m3s = spillway_C * spillway_L * head_m * sqrt(head_m);
+                overflow_Mm3 = MACRO_m3s_2_Mm3(overflow_m3s,S->dt);
+
+                // We can have situations where the spillway is set lower than HRW.
+                // We need to check water availability, this goes essentialy all the way down to the bottom of the reservoir
+                double filling_at_spillway_Mm3 = calcResVolume(spillway_level_masl);
+                current_filling  = this->res_Mm3;
+                max_overflow = current_filling - filling_at_spillway_Mm3;
+
+                if(overflow_Mm3 > max_overflow){
+                    overflow_Mm3 = max_overflow;
+                }
+
+                if(overflow_Mm3 < 0.0) {
+                    LOG_WARN("Negative overflow is not allowed \n");
+                    LOG_WARN("current_filling  = " + std::to_string(this->res_Mm3)); 
+                    LOG_WARN("filling_at_hrw_Mm3 = " + std::to_string(filling_at_hrw_Mm3));
+                    LOG_WARN("spillway_level_masl= " + std::to_string(spillway_level_masl));
+                    LOG_WARN("overflow_Mm3 = " + std::to_string(overflow_Mm3));
+                    LOG_WARN("res_masl= " + std::to_string(this->res_masl));
+                    LOG_WARN("spillway_level_masl = " + std::to_string(spillway_level_masl));
+                    LOG_ERR("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+                }
+                return overflow_Mm3;
+            } else {
+                return 0.0;
+            }
+
+
+        } else {
+            LOG_ERR("ERROR: No method for calculating overflow is specified. Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+        }
+
         return overflow_Mm3;
     }
 }
 ////////////////////////////////////////////////////////////////
 double Reservoir::calcResVolume(double masl) {  // Returns Mm3
     double h = masl - bottom_masl;
-
     if (h < 0.0) {
         LOG_ERR("ERROR: masl (" + std::to_string(masl) + 
         ") is below bottom_masl (" + std::to_string(bottom_masl) + ").\n");
     }
-
     double area = (h * slope_term) + width_m* h;
     return area * length_m / 1000000.0; // Convert to Mm3
 }
 ////////////////////////////////////////////////////////////////
 double Reservoir::calcResMasl(double Mm3) {     // Returns masl
-
     if (Mm3 < 0.0) {
         LOG_ERR("Error: Mm3 (" + std::to_string(Mm3) + ") is negative in calcResMasl.\n");
     }
-
     double h = Mm3 * 1000000.0 / geo_denom;
-
     return bottom_masl + h;  // masl 
 }
 ////////////////////////////////////////////////////////////////
@@ -275,7 +357,6 @@ void Reservoir::InitReservoir(void) {
         if(outlet_hatch_in_use) {
             filling_at_hatchlevel = this->calcResVolume(this->hatch_masl);
         }
-
     }
 }
 ////////////////////////////////////////////////////////////////
@@ -328,30 +409,6 @@ void Reservoir::ValidateReservoirSettings() {
     }
 
 
-    // BVM, May 2026. 
-    // WORK IN PROGRESS: Could probably do better on this. 
-    // 
-    // FLOODLEVEL_PENALTY 300
-    // # Reservoir curve points, [masl, Mm3] Curve must go below hatch_masl.
-    // RESERVOIR_CURVE 7
-    // 747	0.0
-    // 748	1.0
-    // 749	2.37
-    // 750	3.24
-    // 757	10.0
-    // 758	15.0
-    // 760	500
-    // # Overflow curve, points, downstream idnr   [masl, m3s]
-    // OVERFLOW_CURVE 3 2
-    // 757	0.0
-    // 758	10.0
-    // 760	200.0
-    // FAST_OVERFLOW FALSE
-    // # Outlet hatch downstream_nodeid, qmin_hatch, qmax_hatch, hatch_masl
-    // OUTLET_HATCH -9999
-    // OUTLET_TUNNEL 1
-    // OUTLET_AUTO_QMIN -9999
-
 }
 ////////////////////////////////////////////////////////////////
 
@@ -368,7 +425,6 @@ void Reservoir::ValidateReservoirLevelMm3(size_t t, double level_Mm3) {
 }
 ///////////////////////////////////////////////////////////////
 int Reservoir::Simulate(size_t t) {
-
 
     // BVM 27 june 2025:
     // We minimize the updating of the MASL in the reservoir. 
@@ -441,16 +497,41 @@ int Reservoir::Simulate(size_t t) {
 
         // I think we should not allow for higher pressure than up to HRW, it should never pay off to flood.
         ptr_downstream_node_tunnel->start_of_stp_masl = this->res_masl;
+
         if(  this->res_masl > this->res_HRW) {
             ptr_downstream_node_tunnel->start_of_stp_masl = this->res_HRW;
         }
 
-        ptr_downstream_node_tunnel->up_res_Mm3 = this->res_Mm3;
+        // Before:
+        // ptr_downstream_node_tunnel->up_res_Mm3 = this->res_Mm3;
+
+        // After: only water above LRW is actually usable for production
+        ptr_downstream_node_tunnel->up_res_Mm3 = std::max(0.0, this->res_Mm3 - this->filling_at_lrw_Mm3);
+
+
         ptr_downstream_node_tunnel->S->dt = S->dt;
+
         double tunnelf_m3s = ptr_downstream_node_tunnel->GetTunnelFLow(t);
+        
         ptr_downstream_node_tunnel->S->up_inflow[t] = tunnelf_m3s;
+
+        // BVM June 2026, 
+        // ptr_downstream_node_tunnel->S->tot_outflow[t] = tunnelf_m3s;
+
         tunnelflow_Mm3 = MACRO_m3s_2_Mm3(tunnelf_m3s ,S->dt);  // Mm3 
+
+        
+         if(tunnelflow_Mm3 < 0.0) {
+            LOG_WARN("Negative tunnel flow is not allowed \n");
+            LOG_WARN("tunnelf_m3s = " + std::to_string(tunnelf_m3s));
+            LOG_WARN("tunnelflow_Mm3 = " + std::to_string(tunnelflow_Mm3));
+            LOG_WARN("res_masl= " + std::to_string(this->res_masl));
+            LOG_WARN("res_HRW = " + std::to_string(this->res_HRW));
+            LOG_ERR("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
+        }
     }
+
+
 
 
     this->res_Mm3 -= tunnelflow_Mm3;
@@ -468,6 +549,7 @@ int Reservoir::Simulate(size_t t) {
     //-------------------------------------------------------------------
     // OUTLET HATCH
     if(outlet_hatch_in_use) {
+
         hatchflow_Mm3 = 0.0;
 
         if(S->action[t][this->idnr] < -0.000001 || S->action[t][this->idnr] > 1.000001) {
@@ -475,7 +557,6 @@ int Reservoir::Simulate(size_t t) {
             LOG_WARN("Node idnr = " + std::to_string(int(this->idnr)) + "   nodename = " + this->nodename );
             LOG_ERR("Check your action file, and make sure the action for the hatch is between 0.0 and 1.0");
         }
-
 
         if(this->res_masl > this->hatch_masl ) {
             // Some places we need to release water regardless of the actions set 
@@ -501,6 +582,7 @@ int Reservoir::Simulate(size_t t) {
     }
 
 
+
     // AUTO HATCH 
     outlet_auto_qmin_flow_Mm3 = 0.0;    
     // Here we simulate the effect of an automatic water release set by the operators.
@@ -521,6 +603,7 @@ int Reservoir::Simulate(size_t t) {
         this->res_masl = ac_res_Mm3_2_masl.x2y(this->res_Mm3);
     }
 
+
     if(this->res_masl < 1.0 + (-1.0 * VERY_LARGE_NUMBER)   ) {
         LOG_WARN("ERROR: Calling reservoir masl calculation (x2y) for node " 
             + nodename + " at timestep " + std::to_string(t));
@@ -528,16 +611,30 @@ int Reservoir::Simulate(size_t t) {
             + nodename + " at timestep " + std::to_string(t));
     }
 
+
     #if HERSS_DEBUG_ALL
         printf("Node idnr = %d   nodename = %s\n ", int(this->idnr) , this->nodename.c_str() );
         printf("masl= %.4f  Mm3 = %.4f\n", this->res_masl,  this->res_Mm3);
         printf("-----------------------\n");
     #endif
 
+
+
+
     // Overflow is always used
     overflow_Mm3 = this->CalcOverflow();
+
+
+    if( ptr_downstream_node_overflow == NULL) {
+        LOG_WARN("ERROR IN RESERVOIR:  Something is wrong with the pointer:  ptr_downstream_node_overflow \n");
+        LOG_WARN("idnr=" + std::to_string(int(idnr)) + "  nodename=" + nodename + "   timestep=" + std::to_string(t));
+        LOG_ERR("res_masl     = " + std::to_string(this->res_masl));
+    }
+
+
     ptr_downstream_node_overflow->S->up_inflow[t] += MACRO_Mm3_2_m3s(overflow_Mm3, this->dt);  // m3/s
     this->res_Mm3 -= overflow_Mm3;
+
 
     // Update the reservoir masl
     if(this->use_reservoir_geometry) {
@@ -579,8 +676,16 @@ int Reservoir::Simulate(size_t t) {
         remaining_active_Mm3 = 0.0;
     }
 
-    if(fract_filling < -1.0) {
+
+    if(fract_filling < -100.0) {
         LOG_WARN("There is obviously something wrong with the fract_filling calculations => NON PHYSICAL SITUATIONS ");
+        LOG_WARN("res_Mm3  = " + std::to_string(res_Mm3) + "  Mm3");
+        LOG_WARN("filling_at_lrw_Mm3 = " + std::to_string(filling_at_lrw_Mm3) + "  Mm3");
+        LOG_WARN("filling_at_hrw_Mm3 = " + std::to_string(filling_at_hrw_Mm3) + "  Mm3");
+        LOG_WARN("hatchflow_Mm3 = " + std::to_string(hatchflow_Mm3) + "  Mm3");
+        LOG_WARN("tunnelflow_Mm3 = " + std::to_string(tunnelflow_Mm3) + "  Mm3");
+        LOG_WARN("overflow_Mm3 = " + std::to_string(overflow_Mm3) + "  Mm3");
+        LOG_WARN("outlet_auto_qmin_flow_Mm3 = " + std::to_string(outlet_auto_qmin_flow_Mm3) + "  Mm3");
         LOG_WARN("idnr=" + std::to_string(int(idnr)) + "  nodename=" + nodename + "   timestep=" + std::to_string(t));
         LOG_ERR("current_filling     = " + std::to_string(res_Mm3));
     }
@@ -685,6 +790,52 @@ int Reservoir::ReadNodeData(string filename){
                          this->floodlevel_penalty = atof(value2.c_str() );
                     }
 
+
+                    if (keyword2.compare("SPILLWAY") == 0) {
+                        // SPILLWAY  downstream_idnr  C  L  spillway_level_masl
+                        // SPILLWAY 2 2.1 10.0 757.0
+                        int tmpidnr = atoi(value2.c_str() );
+                        if(tmpidnr < 0) {
+                            LOG_INFO("ERROR: SPILLWAY downstream node idnr must be non-negative. Check topology file " + filename);
+                            LOG_INFO("Reservoir::ReadNodeData  nodename: " + nodename + ", idnr: " + std::to_string(idnr) + ", nodetype: " + EnumToString(nodetype) + "\n");
+                            LOG_ERR("ERROR: SPILLWAY downstream node idnr must be non-negative. Check topology file " + filename);
+                        }
+
+                        downstream_idnr_overflow = size_t(tmpidnr);
+
+                        if(downstream_idnr_overflow != this->idnr) {
+                            downstream_node_in_use = true;
+                            outlet_overflow_in_use = true;
+                            this->use_spillway = true;          
+
+                        } else {
+                            LOG_INFO("ERROR: SPILLWAY downstream node idnr must be non-negative and cannot point to itself. Check topology file " + filename);
+                            LOG_INFO("Reservoir::ReadNodeData  nodename: " + nodename + ", idnr: " + std::to_string(idnr) + ", nodetype: " + EnumToString(nodetype) + "\n");
+                            LOG_ERR("ERROR: SPILLWAY downstream node idnr must be non-negative and cannot point to itself. Check topology file " + filename);
+                        }
+
+                        value2      = line_obj.extractNextElementFromLine(&line);
+                        spillway_C = atof(value2.c_str() );
+                        if(spillway_C < 0.0 || spillway_C > 100.0 ) {
+                            LOG_WARN("ERROR: SPILLWAY C is out of bounds: " + std::to_string(spillway_C));
+                            LOG_ERR("Reservoir: " + this->nodename);
+                        }
+
+                        value2      = line_obj.extractNextElementFromLine(&line);
+                        spillway_L = atof(value2.c_str() );
+                        if(spillway_L < 0.0 || spillway_L > VERY_LARGE_NUMBER) {
+                            LOG_WARN("ERROR: SPILLWAY L is out of bounds: " + std::to_string(spillway_L));
+                            LOG_ERR("Reservoir: " + this->nodename);
+                        }
+
+                        value2      = line_obj.extractNextElementFromLine(&line);
+                        spillway_level_masl = atof(value2.c_str() );
+                        if(spillway_level_masl < 0.0 || spillway_level_masl > MOUNT_EVEREST_MASL) {
+                            LOG_WARN("ERROR: SPILLWAY level masl is out of bounds: " + std::to_string(spillway_level_masl));
+                            LOG_ERR("Reservoir: " + this->nodename);
+                        }
+                    }
+
                     // FAST_OVERFLOW FALSE
                     if (keyword2.compare("FAST_OVERFLOW") == 0) {
                         if (value2 == "TRUE") {
@@ -697,9 +848,11 @@ int Reservoir::ReadNodeData(string filename){
                     }
 
                     // OUTLET_HATCH -9999
-                    if ( keyword2.compare("OUTLET_HATCH") == 0) {
-                        // BVM, May 2026.
-                        if(atoi(value2.c_str() ) >= 0) { 
+                    if (keyword2.compare("OUTLET_HATCH") == 0) {
+
+                        // BVM, May 2026
+                        if(atoi(value2.c_str() ) >= 0) {
+                            
                             downstream_idnr_hatch = atoi(value2.c_str());
 
                             // We do not allow to point to yourself. This can cause numerical instability and is not physical.
@@ -709,11 +862,11 @@ int Reservoir::ReadNodeData(string filename){
                                 LOG_ERR("ERROR: OUTLET_HATCH cannot point to itself. Reservoir::ReadNodeData  nodename: " + nodename + ", idnr: " + std::to_string(idnr) + ", nodetype: " + EnumToString(nodetype) + "\n");
                             }
 
-
                             outlet_hatch_in_use            = true;
                             downstream_node_in_use         = true;
 
                             // There should be five columns in this line
+
                             // OUTLET_HATCH downstream_nodeid, qmin_hatch, qmax_hatch, hatch_masl
                             int n_cols = line_obj.calcNrCols(&tmpline2);
                             if(n_cols != 5) {
@@ -743,27 +896,48 @@ int Reservoir::ReadNodeData(string filename){
                                 LOG_WARN("ERROR: maxQ_hatch is out of bounds: " + std::to_string(maxQ_hatch));
                                 LOG_ERR("Reservoir: " + this->nodename);
                             }
+
                         }
                     }
+
 
                     // OUTLET_TUNNEL 1
-                    if ( keyword2.compare("OUTLET_TUNNEL") == 0) {
+                    if (keyword2.compare("OUTLET_TUNNEL") == 0) {
+                        int tmp_idnr = atoi(value2.c_str());   // <-- parse as signed int
 
-                        downstream_idnr_tunnel = atoi(value2.c_str()  );
+                        if (tmp_idnr >= 0) {
+                            downstream_idnr_tunnel = (size_t)tmp_idnr;
 
-                            if(size_t(downstream_idnr_tunnel) == this->idnr) {
-                                LOG_INFO("ERROR: OUTLET_TUNNEL cannot point to itself.");
-                                LOG_INFO("This can cause numerical instability and is not physical. Check topology file " + filename);
-                                LOG_ERR("ERROR: OUTLET_TUNNEL cannot point to itself. Reservoir::ReadNodeData  nodename: " + nodename + ", idnr: " + std::to_string(idnr) + ", nodetype: " + EnumToString(nodetype) + "\n");
-                            }
-
-
-                        if(downstream_idnr_tunnel >=0) {
-                            outlet_tunnel_in_use           = true;
-                            downstream_node_in_use         = true;
+                        if (downstream_idnr_tunnel == this->idnr) {
+                            // self-loop check ...
+                            LOG_ERR("ERROR: OUTLET_TUNNEL cannot point to itself. ...");
                         }
+
+                        outlet_tunnel_in_use   = true;
+                        downstream_node_in_use = true;
+                        }
+                        // if tmp_idnr < 0 (-9999), tunnel is simply not used — leave flags false
                     }
+
+
+
+                    // // OUTLET_TUNNEL 1
+                    // if ( keyword2.compare("OUTLET_TUNNEL") == 0) {
+                    //     downstream_idnr_tunnel = atoi(value2.c_str()  );
+                    //         if(size_t(downstream_idnr_tunnel) == this->idnr) {
+                    //             LOG_INFO("ERROR: OUTLET_TUNNEL cannot point to itself.");
+                    //             LOG_INFO("This can cause numerical instability and is not physical. Check topology file " + filename);
+                    //             LOG_ERR("ERROR: OUTLET_TUNNEL cannot point to itself. Reservoir::ReadNodeData  nodename: " + nodename + ", idnr: " + std::to_string(idnr) + ", nodetype: " + EnumToString(nodetype) + "\n");
+                    //         }
+                    //     if(downstream_idnr_tunnel >=0) {
+                    //         outlet_tunnel_in_use           = true;
+                    //         downstream_node_in_use         = true;
+                    //     }
+                    // }
                     
+
+
+
 
                     // OUTLET_AUTO_QMIN -9999
                     if (keyword2.compare("OUTLET_AUTO_QMIN") == 0) {
@@ -854,7 +1028,15 @@ int Reservoir::ReadNodeData(string filename){
                         if( nr_points_ovefl_curve > MAX_NR_POINTS_CURVE) {
                             LOG_ERR("nr_points_ovefl_curve > MAX_NR_POINTS_CURVE ");
                         }
+                        
                         downstream_idnr_overflow = atoi(token.c_str());
+
+                        if(downstream_idnr_overflow < 0) {
+                            LOG_ERR("ERROR: downstream node idnr for OUTLET_OVERFLOW must be non-negative in topologyfile " + filename);
+                        }
+                        
+                        this->use_overflow_curve = true;
+
                         if(size_t(downstream_idnr_overflow) == this->idnr) {
                             LOG_INFO("ERROR: OUTLET_OVERFLOW cannot point to itself.");
                             LOG_INFO("This can cause numerical instability and is not physical. Check topology file " + filename);
@@ -876,25 +1058,36 @@ int Reservoir::ReadNodeData(string filename){
         }
     }
 
+
     // We need to set the downstream_idnr
     // We always choose Powerstation node if it exists.
-    // Every Reservoir has overflow so if we dont have tunnel we set to overflow node. 
-    if(outlet_overflow_in_use) { 
+    // Every Reservoir has overflow so if we dont have tunnel we set to overflow node.
+    if(outlet_overflow_in_use) {
         downstream_idnr = downstream_idnr_overflow;
         downstream_node_in_use = true;
     }
+
     if(outlet_tunnel_in_use) {
         downstream_idnr = downstream_idnr_tunnel;
         downstream_node_in_use = true;
     }
 
 
-    if(this->use_reservoir_geometry) {
+    if(!downstream_node_in_use){
+        LOG_ERR("ERROR: Downstream node has to be set for reservoir. Please add a channel node downstream of the reservoirs");
+    }
+
+
+
+
+    if(this->use_reservoir_geometry){
          // Check if we have the necessary variables to calculate the reservoir geometry.
          if(width_m <= 0.0 || length_m <= 0.0 || theta <= 0.0 || bottom_masl < 0.0) {
              LOG_ERR("ERROR: To use reservoir geometry, you need to set WIDTH_M, LENGTH_M, THETA and BOTTOM_MASL in the topology file for reservoir " + nodename);
          } 
     }
+
+
 
     if(this->use_reservoir_geometry && this->use_reservoir_curve) {
         LOG_ERR("ERROR: You cannot use both reservoir geometry and reservoir curve in the same reservoir " 
@@ -974,17 +1167,18 @@ int Reservoir::WriteNodeOutput(GlobalConfig *gc){
     FILE *fp;
     char outfilename [100];
     sprintf (outfilename, "%snode%lu_%s.txt", gc->outputdir.c_str() , (idnr) , nodename.c_str()  );
-
     char outstr [100];
 
     if((fp = fopen(  outfilename ,"w"))==NULL) {
         LOG_ERR("Cannot open file " + std::string(outfilename));
     }
 
-    sprintf (outstr, "RESERVOIR node %d %s\n", int(idnr), nodename.c_str()  );
+    sprintf (outstr, "RESERVOIR node %d %s\n", int(idnr), nodename.c_str() );
     fprintf(fp, "%s", outstr);
-    fprintf(fp, "reservoir_init_fr= %.5f\n", this->reservoir_init_fr);
-
+    fprintf(fp, "reservoir_init_fr= %.5f  masl=%.3f\n", this->reservoir_init_fr, this->res_masl);
+    fprintf(fp, "Filling at HRW [Mm3] = %.5f\n", this->filling_at_hrw_Mm3);
+    fprintf(fp, "Filling at LRW [Mm3] = %.5f\n", this->filling_at_lrw_Mm3);
+    fprintf(fp, "Active reservoir capacity [Mm3] = %.5f\n", this->filling_at_hrw_Mm3 - this->filling_at_lrw_Mm3);
     fprintf(fp, "yyyy mm dd hh [m3/s] [Euro/MWh] [fr] [m3/s] [Mm3] [masl] [fr] [Euro]         [m3/s]     [m3/s]    [m3/s]   [m3/s]    [m3/s] \n");
     fprintf(fp, "yyyy mm dd hh Inflow Price Action Up_Inflow Res_Mm3 Res_masl Res_fr lrw_cost tunnelflow hatchflow overflow auto_qmin tot_outflow\n");
 

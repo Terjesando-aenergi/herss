@@ -16,7 +16,7 @@ Note that there might be dead water below LRW in the system
 Average_price_Euro           = 28.260
 RestPrice_Euro               = 33.000
 tot_remaining_Mm3            = 30.477
-tot_active_remaining_Mm3     = 0.000
+tot_active_remaining_Mm3     = 17.800
 tot_remaining_MWh            = 0.000
 tot_remaining_Euro           = 0.000
 Sum_Production_MWh           = 0.000
@@ -26,6 +26,7 @@ sum_qmin_cost_Euro           = 0.000
 sum_lrw_cost_Euro            = 0.000
 sum_startstopcost_Euro       = 0.000
 sum_max_adjustment_cost      = 0.000
+sum_aggressive_actions_cost  = 0.000
 tot_cost_Euro                = 0.000
 tot_profit_Euro              = 0.000
 valuefunction_Euro           = 0.000

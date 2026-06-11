@@ -14,7 +14,6 @@ HRW 757.0
 LRW 748.0
 RES_PENALTY 300
 FLOODLEVEL_PENALTY 300
-
 # Reservoir Geometry, scipping the reservoir curve. specifying the geometry of a trapezoide
 RESERVOIR_GEOMETRY
 WIDTH_M 1000
@@ -25,7 +24,7 @@ LENGTH_M 1000
 THETA 20
 BOTTOM_MASL 745.0
 # SPILLWAY  downstream_idnr  C  L  spillway_level_masl
-SPILLWAY 2 2.1 10.0 757.0
+SPILLWAY 2 2.1 50.0 757.0
 FAST_OVERFLOW FALSE
 # Outlet hatch downstream_nodeid, qmin_hatch, qmax_hatch, hatch_masl
 OUTLET_HATCH -9999
@@ -41,17 +40,18 @@ DOWNLINK_IDNR 2
 # Turbine efficiency curve [M3s, %]
 NR_GENERATORS 1
 GENERATOR 0
-TURBINE_CURVE 10
-0.00	0
-1.00	50
-1.72	80
-2.27	90
-2.79	93
-3.19	93
-3.47	93
-3.67	92
-3.79	91
-4.00	88  
+UNIFORM_NORMALIZED_CURVE 11
+0.0 0.0 
+0.1	50.0
+0.2 75.0
+0.3 86.0
+0.4 90.0
+0.5	92.0
+0.6	91.5
+0.7	90.0
+0.8 88.0
+0.9 85.0
+1.0	82.0
 GENERATOR_MAX_DISCHARGE 4.0
 STATIC_GENERATOR_EFFICIENCY	0.96
 HEADLOSSCOEF	0.3
