@@ -50,7 +50,7 @@ const string VERSION = "3.1.03";
 const string VERSION_DATE = "20260611";
 
 // Maximum number of nodes allowed. // to save coding
-#define MAX_NR_NODES 30
+#define MAX_NR_NODES 250
 // Maximum number of coloumns (words or tokens) in one line
 #define MAX_WORDS 200
 
@@ -478,7 +478,12 @@ class Qmin {
     bool qmin_flag;
     QminPeriod timeperiods[MAX_NUMBER_OF_QMIN_PERIODS];
     int nr_periods;
-    double calcQminRequirement(int year, int month, int day, double *cost );
+    double calcQminRequirement(int year, int month, int day, double *cost);
+    // Terje Sandø, 02.07.2026, extended 06.07.2026
+    // Validates qmin period definitions at startup. Shared by Reservoir OUTLET_AUTO_QMIN
+    // and Channel QMIN. Catches topology file errors (bad dates, gaps, overlaps) with clear
+    // error messages before any simulation timestep is computed.
+    void validatePeriods(string nodename);
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -670,6 +675,11 @@ class Reservoir: public Node {
     double spillway_level_masl;  // The level of the spillway in masl
     bool use_spillway; 
 
+    // Terje Sandø, 02.07.2026
+    // MASL of the outlet_auto_min on the reservoir.
+    // Water can only flow out when the reservoir level exceeds this threshold.
+    // Prevents the model from releasing water that is physically below the pipe.
+    double outlet_auto_qmin_masl;
 
     ArrayCurve ac_res_masl_2_Mm3;
     ArrayCurve ac_res_Mm3_2_masl;
