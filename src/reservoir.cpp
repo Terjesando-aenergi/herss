@@ -56,6 +56,10 @@ Reservoir::Reservoir(){
     outlet_overflow_in_use         = false;
     
     outlet_auto_qmin_in_use        = false;
+    // Terje Sandø, 02.07.2026
+    // Set outlet MASL to an impossible large value before parsing.
+    // If the topology file fails to set this value, ValidateReservoirSettings will catch the impossible value and report a clear error.
+    outlet_auto_qmin_masl          = -1.0 * NOT_INIT;
 
     use_reservoir_geometry        = false;
     use_reservoir_curve           = false;
@@ -408,11 +412,26 @@ void Reservoir::ValidateReservoirSettings() {
         LOG_ERR("Reservoir: " + this->nodename);
     }
 
+    // Terje Sandø, 02.07.2026
+    // Validate outlet_auto_qmin MASL and qmin period definitions.
+    // outlet_auto_qmin_masl must be >= reservoir bottom.
+    // validatePeriods checks date ranges, year-crossings, coverage gaps, and overlaps.
+    if(outlet_auto_qmin_in_use) {
+        if(use_reservoir_geometry && outlet_auto_qmin_masl < bottom_masl) {
+            LOG_WARN("OUTLET_AUTO_QMIN_MASL (" + std::to_string(outlet_auto_qmin_masl) + ") is below BOTTOM_MASL ("
+                + std::to_string(bottom_masl) + ") for reservoir " + nodename);
+            LOG_ERR("OUTLET_AUTO_QMIN_MASL must be >= BOTTOM_MASL. Check topology file.");
+        }
+        if(use_reservoir_curve && outlet_auto_qmin_masl < res_curve_masl[0]) {
+            LOG_WARN("OUTLET_AUTO_QMIN_MASL (" + std::to_string(outlet_auto_qmin_masl) + ") is below lowest reservoir curve point ("
+                + std::to_string(res_curve_masl[0]) + ") for reservoir " + nodename);
+            LOG_ERR("OUTLET_AUTO_QMIN_MASL must be >= lowest reservoir curve point. Check topology file.");
+        }
+        this->qmin.validatePeriods(this->nodename);
+    }
 
 }
 ////////////////////////////////////////////////////////////////
-
-
 // We use this to check if the reservoir level is valid.
 void Reservoir::ValidateReservoirLevelMm3(size_t t, double level_Mm3) {
     if(this->use_reservoir_curve) {
@@ -563,7 +582,13 @@ int Reservoir::Simulate(size_t t) {
             // This can be done by setting minQ_hatch to a low level.
             hatchflow_Mm3 = this->minQ_hatch + S->action[t][this->idnr]*(this->maxQ_hatch - this->minQ_hatch);
             hatchflow_Mm3 = MACRO_m3s_2_Mm3(hatchflow_Mm3, S->dt);  // Mm3
-            current_filling = ac_res_masl_2_Mm3.x2y(this->res_masl);
+            // also here we need to check that we do not release more water than we have available.
+            if(this->use_reservoir_geometry) {
+                current_filling = this->calcResVolume(this->res_masl);
+            } else {
+                current_filling = ac_res_masl_2_Mm3.x2y(this->res_masl);
+            }
+
             max_hatchflow = current_filling - filling_at_hatchlevel;
 
             if (hatchflow_Mm3 > max_hatchflow) {
@@ -588,9 +613,31 @@ int Reservoir::Simulate(size_t t) {
     // Here we simulate the effect of an automatic water release set by the operators.
     if(outlet_auto_qmin_in_use){
         double void_cost;
-        outlet_auto_qmin_flow_Mm3 = this->qmin.calcQminRequirement(S->year[t], S->month[t], S->day[t],  &void_cost  );  // m3/s
-        this->ptr_downstream_node_auto_qmin->S->up_inflow[t] += outlet_auto_qmin_flow_Mm3;
-        outlet_auto_qmin_flow_Mm3 = MACRO_m3s_2_Mm3(outlet_auto_qmin_flow_Mm3, S->dt);  // Mm3
+        double required_m3s = this->qmin.calcQminRequirement(S->year[t], S->month[t], S->day[t], &void_cost);  // m3/s
+        // Changes by Terje Sandø, 02.07.2026. Adding functionality to assure physical auto_qmin release.
+        // Volume stored below the outlet cannot be released through this outlet
+        double filling_at_outlet_Mm3 = 0.0;
+        if(this->use_reservoir_geometry) {
+            filling_at_outlet_Mm3 = this->calcResVolume(this->outlet_auto_qmin_masl);
+        } else if(this->use_reservoir_curve) {
+            filling_at_outlet_Mm3 = ac_res_masl_2_Mm3.x2y(this->outlet_auto_qmin_masl);
+        }
+
+        // Only water above the outlet MASL is available
+        double available_Mm3 = std::max(0.0, this->res_Mm3 - filling_at_outlet_Mm3);
+        double required_Mm3  = MACRO_m3s_2_Mm3(required_m3s, S->dt);
+        double actual_Mm3    = std::min(required_Mm3, available_Mm3);
+        double actual_m3s    = MACRO_Mm3_2_m3s(actual_Mm3, S->dt);
+
+        if(actual_Mm3 < required_Mm3 - 1e-6 && required_m3s > 1e-3) {
+            LOG_WARN("OUTLET_AUTO_QMIN: Cannot meet qmin for node " + std::to_string(int(idnr))
+                + " (" + nodename + ") at timestep " + std::to_string(t)
+                + ". Required: " + std::to_string(required_m3s)
+                + " m3/s, Released: " + std::to_string(actual_m3s) + " m3/s.");
+        }
+
+        this->ptr_downstream_node_auto_qmin->S->up_inflow[t] += actual_m3s;
+        outlet_auto_qmin_flow_Mm3 = actual_Mm3;
         this->res_Mm3 -= outlet_auto_qmin_flow_Mm3;
         ValidateReservoirLevelMm3(t, this->res_Mm3);
     }
@@ -939,24 +986,23 @@ int Reservoir::ReadNodeData(string filename){
 
 
 
-                    // OUTLET_AUTO_QMIN -9999
+                    // Change by Terje Sandø, 02.07.2026
+                    // Parse OUTLET_AUTO_QMIN with outlet MASL and seasonal flow periods.
+                    // Activates OUTLET_AUTO_QMIN.
+                    // Format: OUTLET_AUTO_QMIN <nr_periods> <downstream_idnr> <outlet_masl>
+                    // Each following line: DD.MM DD.MM discharge_m3s
+                    // Note: a downstream Channel's traveltime delays this release, so the channel's
+                    // QMIN requirement may still incur a penalty even when this reservoir releases on time.
                     if (keyword2.compare("OUTLET_AUTO_QMIN") == 0) {
-                        // Number of timeperiods and downstream node idnr
-                        // OUTLET_AUTO_QMIN 2 4
-                        // 01.10 30.04	5.0
-                        // 01.05 30.09	10.5
                         outlet_auto_qmin_in_use = false;
 
-                        if(atoi(value2.c_str() ) >= 0) { 
-                            cout << "Found OUTLET_AUTO_QMIN " << endl;
-                            cout << "WORK IN PROGRESS - make a topofile with this setting active, then QR" << endl;
-                            LOG_ERR("OUTLET_AUTO_QMIN is WORK IN PROGRESS ");
-
+                        if(atoi(value2.c_str()) >= 0) {
                             outlet_auto_qmin_in_use = true;
+                            downstream_node_in_use  = true;
                             this->qmin.nr_periods = atoi(value2.c_str());
-                            
-                            // Downstream node
-                            value   = line_obj.extractNextElementFromLine(&line);
+
+                            // 3rd token: downstream node idnr
+                            value = line_obj.extractNextElementFromLine(&line);
                             this->downstream_idnr_auto_qmin = atoi(value.c_str());
 
                             if(size_t(downstream_idnr_auto_qmin) == this->idnr) {
@@ -965,26 +1011,55 @@ int Reservoir::ReadNodeData(string filename){
                                 LOG_ERR("ERROR: OUTLET_AUTO_QMIN cannot point to itself. Reservoir::ReadNodeData  nodename: " + nodename + ", idnr: " + std::to_string(idnr) + ", nodetype: " + EnumToString(nodetype) + "\n");
                             }
 
+                            // 4th token: outlet MASL
+                            value = line_obj.extractNextElementFromLine(&line);
+                            this->outlet_auto_qmin_masl = atof(value.c_str());
+
+                            if(outlet_auto_qmin_masl < 0.0 || outlet_auto_qmin_masl > MOUNT_EVEREST_MASL) {
+                                LOG_WARN("OUTLET_AUTO_QMIN_MASL is out of bounds: " + std::to_string(outlet_auto_qmin_masl));
+                                LOG_ERR("Check OUTLET_AUTO_QMIN in topology file " + filename + " for reservoir " + nodename);
+                            }
 
                             // Now we read in the qmin periods (MAXIMUM 5)
+                            if(this->qmin.nr_periods < 1 || this->qmin.nr_periods > MAX_NUMBER_OF_QMIN_PERIODS) {
+                                LOG_WARN("OUTLET_AUTO_QMIN nr_periods out of bounds: " + std::to_string(this->qmin.nr_periods));
+                                LOG_ERR("Check OUTLET_AUTO_QMIN in topology file " + filename + " for reservoir " + nodename);
+                            }
+
+                            // Terje Sandø, 03.07.2026
+                            // Read seasonal qmin period lines (DD.MM DD.MM discharge_m3s).
+                            // Parsing here only guards against a crash in substr() when a token
+                            // is too short. All semantic date validation (month/day ranges, year-crossing, gaps, overlaps) is done in Qmin::validatePeriods(),
+                            // and is called by ValidateReservoirSettings(). 
+                            //Keeping the checks in one place avoids duplicated/inconsistent error messages.
                             for(int q = 0; q < this->qmin.nr_periods; q++) {
-
-                                // getline(myfile, line);
                                 line = gc->topoparser.getLine(k+q+1);
-                                cout << "Reading qmin period line: " << line << endl;
 
-                                // value   = line_obj.extractNextElementFromLine(&line);
-                                // qmin.timeperiods[q].start_day = atoi(value.substr(0,2).c_str() );
-                                // qmin.timeperiods[q].start_month  = atoi(value.substr(3,2).c_str() );
-                        
-                                // value   = line_obj.extractNextElementFromLine(&line);
-                                // qmin.timeperiods[q].end_day = atoi(value.substr(0,2).c_str() );
-                                // qmin.timeperiods[q].end_month  = atoi(value.substr(3,2).c_str() );
+                                // Start date token: substr(3,2) below requires length >= 3, or it throws.
+                                value = line_obj.extractNextElementFromLine(&line);
+                                if(value.length() < 3) {
+                                    LOG_WARN("Qmin period " + std::to_string(q+1) + " start date token '"
+                                        + value + "' is too short to parse. Expected DD.MM format (e.g. 01.04).");
+                                    LOG_ERR("Check OUTLET_AUTO_QMIN periods in topology file "
+                                        + filename + " for reservoir " + nodename + ".");
+                                }
+                                qmin.timeperiods[q].start_day   = atoi(value.substr(0,2).c_str());
+                                qmin.timeperiods[q].start_month = atoi(value.substr(3,2).c_str());
 
-                                // value   = line_obj.extractNextElementFromLine(&line);
-                                // qmin.timeperiods[q].min_discharge = atof(value.c_str() );
-                                // qmin.timeperiods[q].penalty_cost = 0.0;  // This is automatic water release. We check actual qmin in channels. 
+                                // End date token: same crash guard as above.
+                                value = line_obj.extractNextElementFromLine(&line);
+                                if(value.length() < 3) {
+                                    LOG_WARN("Qmin period " + std::to_string(q+1) + " end date token '"
+                                        + value + "' is too short to parse. Expected DD.MM format (e.g. 31.03).");
+                                    LOG_ERR("Check OUTLET_AUTO_QMIN periods in topology file "
+                                        + filename + " for reservoir " + nodename + ".");
+                                }
+                                qmin.timeperiods[q].end_day   = atoi(value.substr(0,2).c_str());
+                                qmin.timeperiods[q].end_month = atoi(value.substr(3,2).c_str());
 
+                                value = line_obj.extractNextElementFromLine(&line);
+                                qmin.timeperiods[q].min_discharge = atof(value.c_str());
+                                qmin.timeperiods[q].penalty_cost  = 0.0;
                             }
                         }
                     }
@@ -1179,6 +1254,12 @@ int Reservoir::WriteNodeOutput(GlobalConfig *gc){
     fprintf(fp, "Filling at HRW [Mm3] = %.5f\n", this->filling_at_hrw_Mm3);
     fprintf(fp, "Filling at LRW [Mm3] = %.5f\n", this->filling_at_lrw_Mm3);
     fprintf(fp, "Active reservoir capacity [Mm3] = %.5f\n", this->filling_at_hrw_Mm3 - this->filling_at_lrw_Mm3);
+    // Terje Sandø, 02.07.2026
+    // Write outlet MASL to output file header for traceability.
+    // Makes it easy to verify which outlet level was active when reviewing results.
+    if(outlet_auto_qmin_in_use) {
+        fprintf(fp, "outlet_auto_qmin_masl [masl] = %.3f\n", this->outlet_auto_qmin_masl);
+    }
     fprintf(fp, "yyyy mm dd hh [m3/s] [Euro/MWh] [fr] [m3/s] [Mm3] [masl] [fr] [Euro]         [m3/s]     [m3/s]    [m3/s]   [m3/s]    [m3/s] \n");
     fprintf(fp, "yyyy mm dd hh Inflow Price Action Up_Inflow Res_Mm3 Res_masl Res_fr lrw_cost tunnelflow hatchflow overflow auto_qmin tot_outflow\n");
 
