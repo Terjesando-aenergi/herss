@@ -734,23 +734,28 @@
 
 	Head losses in the penstock are modelled using a quadratic loss formula:
 
-	$$
-	\Delta H = k \cdot Q^2
-	$$
+	\begin{equation}
+	    \Delta H = k \cdot Q^2
+        \label{eq:Headloss}
+	\end{equation}
+	
 
 	where $k$ is the head loss coefficient (\texttt{HEADLOSSCOEF}) and $Q$ is the discharge
 	[m$^3$/s]. The net head is then:
 
 
-	$$
-	H_\mathrm{netto} = H_\mathrm{brutto} - \Delta H
-	$$
+	\begin{equation}
+	    H_\mathrm{netto} = H_\mathrm{brutto} - \Delta H
+        \label{eq:Head_net}
+	\end{equation}
 
 	Mechanical power output for each generator is:
 
-	$$
-	P = \eta_\mathrm{turbine}(Q) \cdot \eta_\mathrm{generator} \cdot \rho g \cdot H_\mathrm{netto} \cdot Q \quad \text{[MW]}
-	$$
+	\begin{equation}
+	    P = \eta_\mathrm{turbine}(Q) \cdot \eta_\mathrm{generator} \cdot \rho g \cdot H_\mathrm{netto} \cdot Q \quad \text{[MW]}
+        \label{eq:Gen_Mech_power}
+	\end{equation}
+	
 
 	where $\eta_\mathrm{turbine}(Q)$ is the turbine efficiency at the current discharge, read from
 	the turbine efficiency curve, and $\eta_\mathrm{generator}$ is the static generator efficiency.
@@ -842,7 +847,24 @@
 		\item Discharges above \texttt{GENERATOR\_MAX\_DISCHARGE} are treated as an error; the simulation will abort with a diagnostic message.
 	\end{itemize}
 	
-	
+
+    \subsubsection{Headloss in the tunnel}
+    The \texttt{HEADLOSSCOEF} k in eq. (\ref{eq:Headloss}) which is used to estimate head loss eq. (\ref{eq:Head_net}) and eq. (\ref{eq:Gen_Mech_power}) is derived from the Darcy Weisbach equation: 
+
+    \begin{equation}
+        h_f=f_d \cdot \frac{LV^2}{2gD}
+        \label{Darcy_Weisbach}
+    \end{equation}
+    where $f_d$ is the dimensionless Darcy friction factor, $L$ is the tunnel length, $V$ is the speed of water, $g$ is the gravitational acceleration and $D$ is the tunnel diameter. 
+
+    Substituting $V=\frac{Q}{A}$ into eq. (\ref{Darcy_Weisbach}) and comparing the resulting expression with eq. (\ref{eq:Headloss}) yields the tunnel head loss coefficient
+
+    \begin{equation}
+        k = \frac{f_d L}{2 g D A^2},
+        \label{eq:HEADLOSSCOEF}
+    \end{equation}
+
+    depending on the Darcy friction factor, tunnel length, and the tunnel diameter and cross-sectional area. The Darcy friction factor may be found in tables for different surface roughnesses.
 
 	\subsubsection{Penstock Configuration}
 
@@ -866,6 +888,14 @@
 	greater than zero), a warning is issued. This is currently implemented as a soft constraint:
 	the simulation continues but flags the violation in the log. The minimum discharge is used
 	primarily to indicate a technically meaningful lower operating limit for the turbines.
+
+    \subsubsection{Local Energy Equivalent (\texttt{LOCAL\_ENERGY\_EQUIVALENT})}
+    The \texttt{LOCAL\_ENERGY\_EQUIVALENT} [kWh/m$^3$] is a power station specific factor used
+    to convert the water volume stored above LRW in the reservoirs upstream of it into an estimate of the remaining producible energy. It is a static coefficient and should be estimated using
+    representative values for the head and efficiency of each power station and its reservoir.
+    
+    The energy equivalent is used together with \texttt{RESTPRICE} in the input pricefile to
+    estimate the value of the water remaining in the river system at the end of the simulation.
 
 	\subsubsection{Automatic Minimum Flow (\texttt{AUTO\_QMIN})}
 
@@ -1020,6 +1050,9 @@
 		\item \textbf{Rule of thumb}: for steep rivers ($S_0 \sim 0.005$--$0.02$)
 		travel times are typically in the range of 0.1--2 hours per km of reach.
 		For flatter lowland rivers the travel time may be several times longer.
+
+        \item \textbf{Manning's roughness coefficient}: n is typically in the range of 0.025-0.1 for natural streams (\cite{JobsonFroelich88}), where the lower values represent large rivers with little restrictions and rough sections, and the larger numbers represent smaller streams with more rough patches and large boulders.  
+            
 	\end{itemize}
 	
 	The number of cascaded linear reservoirs \texttt{N\_CASCADE\_LINRES} controls
