@@ -497,7 +497,7 @@
     where \texttt{nr\_periods} is the integer describing the number of defined periods listed
     below (Maximum number of 5). Set \texttt{nr\_periods} to a non-positive value (e.g.\
     \texttt{-9999}) to disable \texttt{OUTLET\_AUTO\_QMIN} entirely. At most one of the defined periods may
-    cross the turn of the year (e.g.\ \texttt{01.10 31.03}). HERSS will return warnings for days in the year which is not covered in the defined periods.
+    cross the turn of the year (e.g.\ \texttt{01.10 31.03}). HERSS will return warnings for days in the year which is not covered in the defined periods.  Overlapping periods will be ignored, and only the overlapping period with the first start date will be used. The minimum-flow release hatch is placed at \texttt{outlet\_masl}, and water below this level will not be available for release.
 	
 	\item[Overflow (\texttt{OVERFLOW\_CURVE})] Uncontrolled spillage over the dam crest,
 	described by a piecewise-linear curve mapping reservoir elevation to overflow discharge
@@ -1063,7 +1063,7 @@
 	\subsubsection{Minimum Flow (\texttt{QMIN})}
 
 	A minimum flow requirement can be defined for a channel node using \texttt{QMIN}. If the
-	routed outflow falls below the specified minimum in any time step, a penalty cost is incurred.
+	routed outflow falls below the specified minimum in any time step, a penalty cost is incurred, no additional actions is executed.
 	Up to five seasonal periods with different minimum flow requirements can be defined.
 
     If \texttt{QMIN} is used downstream of a reservoir enforcing the \texttt{OUTLET\_AUTO\_QMIN}, note that the number of cascaded linear reservoirs \texttt{N\_CASCADE\_LINRES}, the time resolution $\Delta t$ in the simulation, and the \texttt{K\_TRAVELTIME\_HOURS} all affect the outflow from this (\texttt{CHANNEL}) node. As the outflow exhibits asymptotic behaviour and for a finite time never approaches the inflow value, a tolerance of $1 \times 10^{-3}$ [m$^3$/s] is used to accept the \texttt{QMIN} requirement.
@@ -1074,8 +1074,7 @@
     <start date DD.MM> <end date DD.MM> <Qmin m3/s> <penalty Euro>
 	...
 	\end{verbatim}
-    where \texttt{nr\_periods} is the integer describing the number of defined periods listed below (Maximum number of 5). At most one of the defined periods may
-    cross the turn of the year (e.g.\ \texttt{01.10 31.03}).
+    where \texttt{nr\_periods} is the integer describing the number of defined periods listed below (Maximum number of 5). The same date verification procedure is used as for \texttt{OUTLET\_AUTO\_QMIN}.
 
 	\subsubsection{State File}
 
