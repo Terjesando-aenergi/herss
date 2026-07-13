@@ -22,8 +22,9 @@ obj/
 *.fdb_latexmk
 
 
-# Private data folder for work
-data/*
+# Auto-generated plots from an undocumented Python plotting function
+# (only matches dataset output/plots/ folders, not the top-level plots/ scripts folder)
+**/output/plots/
 
 
 
